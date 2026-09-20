@@ -110,7 +110,10 @@ type run struct {
 }
 
 func (r *run) report(id string, c *model.Component, o model.Object, msg string, detail ...string) {
-	rule, _ := RuleByID(id)
+	rule, ok := RuleByID(id)
+	if !ok {
+		panic("lint: no rule " + id + " in the catalogue")
+	}
 	r.reportAs(rule.Severity, id, c, o, msg, detail...)
 }
 

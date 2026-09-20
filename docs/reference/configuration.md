@@ -101,7 +101,8 @@ See [What fluxlint renders](rendering.md) for credentials and cache behaviour.
 ## rules
 
 Change the severity of a rule, or turn it off. Values are `error`, `warning`, `info`
-and `off`. The [rules reference](rules.md) lists the defaults.
+and `off`. Name a rule by its ID (`FL-T007`) or its name (`retry-cliff`). A key that is
+not a rule is an error. The [rules reference](rules.md) lists the defaults.
 
 ## assertions
 

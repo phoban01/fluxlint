@@ -169,3 +169,13 @@ func TestCLIObserved(t *testing.T) {
 		t.Errorf("exit %d, stderr %q\n%.600s", exit, errOut, out)
 	}
 }
+
+// A typo in the rules: section must not silently leave the rule switched on.
+func TestCLIRejectsUnknownRuleOverride(t *testing.T) {
+	p := internalPlatform(t)
+	edit(t, p.dir, ".fluxlint.yaml", "kubeVersion:", "rules:\n  FL-R03: \"off\"\nkubeVersion:")
+	_, errOut, exit := cli(t, []string{"NETRC=" + p.netrc}, "check", "--repo", p.dir, "--cache-dir", cacheDir)
+	if exit != 2 || !strings.Contains(errOut, `"FL-R03" is not a rule`) {
+		t.Errorf("exit %d, stderr %q", exit, errOut)
+	}
+}

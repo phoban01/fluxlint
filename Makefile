@@ -1,4 +1,4 @@
-.PHONY: build test e2e lint snapshot
+.PHONY: build test e2e lint snapshot docs docs-serve
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
@@ -15,6 +15,13 @@ lint: ## gofmt and go vet; CI also runs golangci-lint and shellcheck
 	test -z "$$(gofmt -l .)"
 	go vet ./...
 	go vet -tags e2e ./e2e/...
+	@go run ./cmd/fluxlint rules --markdown | diff -q - docs/reference/rules.md >/dev/null || { echo "docs/reference/rules.md is stale: run 'make docs'"; exit 1; }
 
 snapshot: ## Build every release target into dist/ without publishing (needs goreleaser)
 	goreleaser release --snapshot --clean --skip=publish
+
+docs: ## Regenerate the rules reference from the catalogue
+	go run ./cmd/fluxlint rules --markdown > docs/reference/rules.md
+
+docs-serve: ## Preview the docs site (needs: pip install -r docs/requirements.txt)
+	mkdocs serve

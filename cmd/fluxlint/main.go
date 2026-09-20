@@ -128,6 +128,9 @@ func check(args []string) int {
 		o.cfgPath = filepath.Join(o.repo, config.DefaultFile)
 	}
 	cfg, err := config.Load(o.cfgPath)
+	if err == nil {
+		err = lint.ValidateConfig(cfg)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
@@ -264,6 +267,9 @@ func graphCmd(args []string) int {
 		o.cfgPath = filepath.Join(o.repo, config.DefaultFile)
 	}
 	cfg, err := config.Load(o.cfgPath)
+	if err == nil {
+		err = lint.ValidateConfig(cfg)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
