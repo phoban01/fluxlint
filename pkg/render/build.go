@@ -1,7 +1,6 @@
 package render
 
 import (
-	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/phoban01/fluxlint/pkg/model"
 	"sigs.k8s.io/kustomize/api/krusty"
+	"sigs.k8s.io/kustomize/api/provider"
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
@@ -215,29 +215,43 @@ func writeWrapper(tmp, dir string, ov overlay) error {
 	return os.WriteFile(filepath.Join(tmp, "kustomization.yaml"), b, 0o600)
 }
 
-// generateResources mirrors Flux's kustomization generator: every manifest file
-// under dir is a resource, except that a sub-directory with its own
-// kustomization is included as a directory and not descended into.
+// generateResources mirrors the scan in Flux's kustomization generator
+// (fluxcd/pkg/kustomize): every .yaml/.yml file under dir is a resource and
+// must decode as Kubernetes objects — a stray values file fails the build, as
+// it does in the cluster — except that a sub-directory with its own
+// kustomization is included as a directory and not descended into. Files that
+// source-controller leaves out of every artifact are skipped.
 func generateResources(dir string) ([]string, error) {
+	rf := provider.NewDefaultDepProvider().GetResourceFactory()
 	var out []string
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) (walkErr error) {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
+			if p != dir && excludedDirs[d.Name()] {
+				return filepath.SkipDir
+			}
 			if p != dir && hasKustomization(p) {
 				out = append(out, p)
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		switch filepath.Ext(p) {
-		case ".yaml", ".yml":
-		default:
+		if ext := filepath.Ext(p); (ext != ".yaml" && ext != ".yml") || excludedFiles[d.Name()] {
 			return nil
 		}
-		if ok, err := looksLikeManifest(p); err != nil || !ok {
+		content, err := os.ReadFile(p)
+		if err != nil {
 			return err
+		}
+		defer func() { // kustomize's parser can panic on malformed input
+			if r := recover(); r != nil {
+				walkErr = fmt.Errorf("recovered from panic while parsing YAML file %s: %v", filepath.Base(p), r)
+			}
+		}()
+		if _, err := rf.SliceFromBytes(content); err != nil {
+			return fmt.Errorf("failed to decode Kubernetes YAML from %s: %w", p, err)
 		}
 		out = append(out, p)
 		return nil
@@ -246,22 +260,12 @@ func generateResources(dir string) ([]string, error) {
 	return out, err
 }
 
-func looksLikeManifest(path string) (bool, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
+// source-controller's default exclusions that can match a YAML file or a
+// directory containing one.
+var (
+	excludedDirs  = map[string]bool{".git": true, ".github": true, ".circleci": true}
+	excludedFiles = map[string]bool{
+		".travis.yml": true, ".gitlab-ci.yml": true, "appveyor.yml": true, ".drone.yml": true,
+		"cloudbuild.yaml": true, "codeship-services.yml": true, "codeship-steps.yml": true,
 	}
-	for _, doc := range bytes.Split(b, []byte("\n---")) {
-		var m map[string]any
-		if err := yaml.Unmarshal(doc, &m); err != nil {
-			return true, nil // include it so the build reports the syntax error, as Flux would
-		}
-		if m == nil {
-			continue
-		}
-		_, hasKind := m["kind"]
-		_, hasAPI := m["apiVersion"]
-		return hasKind && hasAPI, nil
-	}
-	return false, nil
-}
+)

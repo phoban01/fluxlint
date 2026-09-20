@@ -2,6 +2,7 @@ package lint_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -200,5 +201,21 @@ func TestTiming(t *testing.T) {
 	cfg.Timing.MaxBootstrapBound.Duration = 5 * time.Minute
 	if got := find(analyse(t, "timing", cfg), "FL-T100"); len(got) != 1 {
 		t.Errorf("budget of 5m should fail an 8m bound: %+v", got)
+	}
+}
+
+// In a directory without a kustomization.yaml, Flux treats every YAML file as
+// a manifest: a stray values file fails the build in the cluster, so it fails
+// here. (Found by the differential test against fluxcd/pkg/kustomize.)
+func TestStrayYAMLInGeneratedDirectoryFailsTheBuild(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "apps", "apps", ""))
+	write(t, dir, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n  namespace: default\n")
+	write(t, dir, "apps/values.yaml", "replicas: 3\n")
+	write(t, dir, "apps/.gitlab-ci.yml", "stages: [test]\n") // source-controller never ships CI files
+	r := analyseDir(t, dir, nil)
+	got := find(r, "FL-G008")
+	if len(got) != 1 || !strings.Contains(got[0].Message, "values.yaml") {
+		t.Fatalf("want a build failure naming values.yaml:\n%s", messages(r.Findings))
 	}
 }
