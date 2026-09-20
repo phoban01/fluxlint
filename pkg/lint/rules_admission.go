@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -11,10 +12,14 @@ import (
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	apiextcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	celconfig "k8s.io/apiserver/pkg/apis/cel"
+	"k8s.io/client-go/kubernetes/scheme"
 	psaapi "k8s.io/pod-security-admission/api"
 	psapolicy "k8s.io/pod-security-admission/policy"
 )
@@ -22,6 +27,35 @@ import (
 func (r *run) admissionRules() {
 	r.podSecurity()
 	r.customResources()
+	r.builtins()
+}
+
+var strictDecoder = kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, scheme.Scheme, scheme.Scheme, kjson.SerializerOptions{Strict: true})
+
+// builtins decodes every object of a built-in API group into its real Go type,
+// strictly. Server-side apply — which is how Flux applies — rejects unknown
+// fields and wrong types the same way.
+func (r *run) builtins() {
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			if !builtinGroups[o.Group()] || o.Kind() == "CustomResourceDefinition" {
+				continue
+			}
+			data, err := json.Marshal(o)
+			if err != nil {
+				continue
+			}
+			_, _, err = strictDecoder.Decode(data, nil, nil)
+			switch {
+			case err == nil:
+			case runtime.IsNotRegisteredError(err):
+				r.reportAs(Warning, "FL-V003", c, o, fmt.Sprintf("%s %s is not a built-in API known to this version of fluxlint: removed, misspelt, or newer than the bundled Kubernetes types", o.APIVersion(), o.Kind()))
+			default:
+				msg := strings.TrimPrefix(err.Error(), "strict decoding error: ")
+				r.report("FL-V003", c, o, "does not match the "+o.APIVersion()+" "+o.Kind()+" type", strings.Split(msg, ", ")...)
+			}
+		}
+	}
 }
 
 // podSecurity evaluates every pod template against the Pod Security level its
@@ -81,6 +115,7 @@ func convert(in, out any) bool {
 type crdVersion struct {
 	validator  validation.SchemaValidator
 	structural *structuralschema.Structural
+	cel        *apiextcel.Validator
 }
 
 // customResources checks every custom resource against the CRD that some
@@ -119,6 +154,7 @@ func (r *run) customResources() {
 				}
 				if s, err := structuralschema.NewStructural(&internal); err == nil {
 					cv.structural = s
+					cv.cel = apiextcel.NewValidator(s, true, celconfig.PerCallLimit)
 				}
 			}
 		}
@@ -145,6 +181,13 @@ func (r *run) customResources() {
 			var problems []string
 			for _, e := range validation.ValidateCustomResource(nil, obj, cv.validator) {
 				problems = append(problems, e.Error())
+			}
+			// x-kubernetes-validations: the CEL rules the CRD author wrote
+			if cv.cel != nil && cv.structural != nil && len(problems) == 0 {
+				errs, _ := cv.cel.Validate(context.Background(), nil, cv.structural, obj, nil, celconfig.RuntimeCELCostBudget)
+				for _, e := range errs {
+					problems = append(problems, e.Error())
+				}
 			}
 			if len(problems) > 0 {
 				sort.Strings(problems)

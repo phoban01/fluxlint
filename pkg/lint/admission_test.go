@@ -92,3 +92,42 @@ func TestPodSecurity(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinsDecodeStrictly(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "apps", "apps", ""))
+	write(t, dir, "apps/all.yaml",
+		deployment("fine", "default", 1, plain)+
+			strings.Replace(deployment("typo", "default", 1, plain), "  replicas: 1\n", "  replicaz: 1\n", 1)+
+			strings.Replace(deployment("wrong-type", "default", 1, plain), "  replicas: 1\n", "  replicas: many\n", 1)+
+			"---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: unquoted\n  labels:\n    pod-security.kubernetes.io/warn-version: 1.31\n"+
+			"---\napiVersion: apps/v1beta9\nkind: Deployment\nmetadata:\n  name: old\n  namespace: default\n")
+	r := analyseDir(t, dir, nil)
+	text := messages(find(r, "FL-V003"))
+	for _, want := range []string{
+		`Deployment/default/typo`, `unknown field "spec.replicaz"`,
+		`Deployment/default/wrong-type`, `cannot unmarshal string`,
+		`Namespace/unquoted`, `cannot unmarshal number`, // YAML reads 1.31 as a float; labels are strings
+		`Deployment/default/old`, `not a built-in API`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("FL-V003 lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Deployment/default/fine") || len(find(r, "FL-V003")) != 4 {
+		t.Errorf("want exactly 4 findings:\n%s", text)
+	}
+}
+
+func TestCELValidationRulesInCRD(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "gadgets", "gadgets", ""))
+	write(t, dir, "gadgets/crd.yaml", strings.Replace(gadgetCRD, "              required: [size, mode]\n",
+		"              required: [size, mode]\n              x-kubernetes-validations:\n                - rule: \"self.mode != 'fast' || self.size <= 10\"\n                  message: fast mode supports at most size 10\n", 1))
+	write(t, dir, "gadgets/crs.yaml", gadget("v1", "ok", "{size: 50}")+gadget("v1", "too-big", "{size: 50, mode: fast}"))
+	r := analyseDir(t, dir, nil)
+	got := find(r, "FL-V001")
+	if len(got) != 1 || !strings.Contains(messages(got), "Gadget/default/too-big") || !strings.Contains(messages(got), "fast mode supports at most size 10") {
+		t.Fatalf("the CRD author's CEL rule must be enforced:\n%s", messages(r.Findings))
+	}
+}

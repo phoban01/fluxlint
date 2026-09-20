@@ -752,3 +752,25 @@ func TestBaseImmutableFieldChange(t *testing.T) {
 		t.Errorf("selector change on the externally rendered Deployment not reported: %+v", r.problems())
 	}
 }
+
+// A strategic-merge patch with a misspelt field merges cleanly in kustomize and
+// is then rejected by server-side apply.
+func TestMisspeltFieldInPatchedBuiltin(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "apps/base/podinfo/green/podinfo.yaml", "  patches:\n", `  patches:
+    - target:
+        kind: Deployment
+        name: podinfo
+      patch: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: podinfo
+        spec:
+          template:
+            spec:
+              terminationGracePeriodSecond: 30
+`)
+	r := check(t, dir)
+	expectOnly(t, r, "FL-V003", "Deployment/podinfo/podinfo-green", "terminationGracePeriodSecond")
+}

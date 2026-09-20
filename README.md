@@ -14,7 +14,9 @@ cluster, in well under a second for a typical repository.
   selectors and cert-manager Certificates count as producers); fail-closed webhooks with
   no backends; JSON patches that address `env` or `args` by position.
 - **Will the API server accept it?** Custom resources validated against the CRDs your
-  charts and repositories actually install (served versions, schema after defaulting),
+  charts and repositories actually install (served versions, schema after defaulting, the CRD author's CEL rules), built-in
+  objects decoded strictly into their Kubernetes types (misspelt fields, wrong types,
+  an unquoted `1.31` in a label),
   and pod templates evaluated against their namespace's Pod Security level with the API
   server's own checks.
 - **How long can it take?** Max-plus critical-path analysis over `dependsOn`,
