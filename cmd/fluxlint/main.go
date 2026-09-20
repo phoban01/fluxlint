@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +25,7 @@ Usage:
   fluxlint graph   [flags] [entrypoint]       print the dependency graph (dot or mermaid)
   fluxlint explain <rule>                      describe a rule
   fluxlint rules                               list all rules
+  fluxlint version                             print the version
 
 An entrypoint is the directory a cluster's bootstrap Kustomization points at
 (the --path given to 'flux bootstrap'), relative to the repository root.
@@ -35,11 +35,6 @@ Exit codes: 0 clean, 1 findings at or above --fail-on, 2 usage or I/O error.
 
 Flags for check:
 `
-
-type multi []string
-
-func (m *multi) String() string     { return strings.Join(*m, ",") }
-func (m *multi) Set(s string) error { *m = append(*m, s); return nil }
 
 func main() {
 	if len(os.Args) < 2 {
@@ -57,6 +52,8 @@ func main() {
 		for _, r := range lint.Rules {
 			fmt.Printf("%-8s %-26s %s\n", r.ID, r.Name, r.Severity)
 		}
+	case "version", "--version":
+		fmt.Println(versionString())
 	case "-h", "--help", "help":
 		printUsage(nil)
 	default:

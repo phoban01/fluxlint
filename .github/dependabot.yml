@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      kubernetes: {patterns: ["k8s.io/*", "sigs.k8s.io/*"]}
+      flux: {patterns: ["github.com/fluxcd/*"]}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}

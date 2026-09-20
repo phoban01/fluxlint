@@ -32,6 +32,22 @@ fluxlint is pre-alpha. Rule IDs and the configuration format may still change.
 
 ## Install
 
+Download a release binary for Linux or macOS. The script checks the archive against
+the release's `checksums.txt` and installs to `~/.local/bin`:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/phoban01/fluxlint/main/install.sh | sh
+```
+
+Pick the directory and the version with `-b` and a tag:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/phoban01/fluxlint/main/install.sh | sh -s -- -b /usr/local/bin v0.1.0
+```
+
+Windows archives are on the [releases page](https://github.com/phoban01/fluxlint/releases).
+With Go installed you can also build from source:
+
 ```bash
 go install github.com/phoban01/fluxlint/cmd/fluxlint@latest
 ```
@@ -292,6 +308,7 @@ the provider is reported as `FL-T006`.
 make test   # unit tests; no network
 make e2e    # the built binary against e2e/testdata/platform
 make lint
+make snapshot   # every release target into dist/, nothing published
 ```
 
 The end-to-end suite runs the binary against a small platform repository built from

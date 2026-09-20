@@ -1,0 +1,24 @@
+version: "2"
+linters:
+  default: standard
+  enable: [misspell, unconvert, bodyclose]
+  settings:
+    errcheck:
+      exclude-functions:
+        # cleanup on paths that already carry an error, and writes to stdout/stderr
+        - os.Remove
+        - os.RemoveAll
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (io.ReadCloser).Close
+        - (*compress/gzip.Reader).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck]
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
