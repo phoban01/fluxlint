@@ -219,3 +219,29 @@ func TestStrayYAMLInGeneratedDirectoryFailsTheBuild(t *testing.T) {
 		t.Fatalf("want a build failure naming values.yaml:\n%s", messages(r.Findings))
 	}
 }
+
+func TestDominantDelay(t *testing.T) {
+	got := find(analyse(t, "timing", nil), "FL-T002")
+	if len(got) != 1 || got[0].Component != "flux-system/a" || !strings.Contains(got[0].Message, "62%") {
+		t.Errorf("a's 5m timeout is 62%% of the 8m bound: %+v", got)
+	}
+	cfg := config.Default()
+	cfg.Timing.DominantShare = 0.7
+	if got := find(analyse(t, "timing", cfg), "FL-T002"); len(got) != 0 {
+		t.Errorf("nothing reaches a 70%% share: %+v", got)
+	}
+}
+
+// ${VAR} in a component without postBuild reaches the cluster as written. That
+// is right for a shell script and wrong for a forgotten substitution, so it is
+// a suggestion, reported once per component.
+func TestLiteralVariableWithoutPostBuild(t *testing.T) {
+	r := analyse(t, "timing", nil)
+	got := find(r, "FL-S004")
+	if len(got) != 1 || got[0].Component != "flux-system/c" || got[0].Severity != lint.Info || !strings.Contains(got[0].Message, "${HOME}") {
+		t.Errorf("want one suggestion on c naming ${HOME}: %+v", got)
+	}
+	if p := problems(r); len(p) != 0 {
+		t.Errorf("a suggestion must not fail the run: %v", p)
+	}
+}

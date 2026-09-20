@@ -1,0 +1,171 @@
+//go:build e2e
+
+package e2e
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// cli runs the binary as a user would and returns what it printed.
+func cli(t *testing.T, env []string, args ...string) (stdout, stderr string, exit int) {
+	t.Helper()
+	cmd := exec.Command(binary, args...)
+	cmd.Env = append(os.Environ(), env...)
+	var o, e bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &o, &e
+	err := cmd.Run()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		exit = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run %v: %v", args, err)
+	}
+	return o.String(), e.String(), exit
+}
+
+func TestCLIVersionRulesExplain(t *testing.T) {
+	if out, _, exit := cli(t, nil, "version"); exit != 0 || !strings.HasPrefix(out, "fluxlint ") {
+		t.Errorf("version: exit %d, %q", exit, out)
+	}
+	out, _, exit := cli(t, nil, "rules")
+	if exit != 0 || !strings.Contains(out, "FL-G002") || !strings.Contains(out, "bootstrap-deadlock") {
+		t.Errorf("rules: exit %d, %q", exit, out)
+	}
+	if out, _, exit := cli(t, nil, "explain", "FL-G002"); exit != 0 || !strings.Contains(out, "bootstrap-deadlock") {
+		t.Errorf("explain: exit %d, %q", exit, out)
+	}
+	if _, errOut, exit := cli(t, nil, "explain", "FL-NOPE"); exit != 2 || !strings.Contains(errOut, "unknown rule") {
+		t.Errorf("explain of an unknown rule: exit %d, %q", exit, errOut)
+	}
+	if _, errOut, exit := cli(t, nil, "frobnicate"); exit != 2 || !strings.Contains(errOut, "unknown command") {
+		t.Errorf("unknown command: exit %d, %q", exit, errOut)
+	}
+	if _, _, exit := cli(t, nil); exit != 2 {
+		t.Errorf("no arguments: exit %d, want 2", exit)
+	}
+}
+
+func TestCLIUsageErrors(t *testing.T) {
+	p := internalPlatform(t)
+	base := []string{"check", "--repo", p.dir, "--cache-dir", cacheDir}
+	for name, args := range map[string][]string{
+		"offline and refresh": {"--offline", "--refresh"},
+		"unknown format":      {"--format", "xml"},
+		"missing observed":    {"--observed", filepath.Join(p.dir, "absent.prom")},
+	} {
+		if _, errOut, exit := cli(t, []string{"NETRC=" + p.netrc}, append(base, args...)...); exit != 2 || !strings.Contains(errOut, "error:") {
+			t.Errorf("%s: exit %d, stderr %q", name, exit, errOut)
+		}
+	}
+	empty := t.TempDir()
+	if _, errOut, exit := cli(t, nil, "check", "--repo", empty); exit != 2 || !strings.Contains(errOut, "no entrypoints") {
+		t.Errorf("no entrypoints: exit %d, %q", exit, errOut)
+	}
+}
+
+// The baseline carries one warning (the positional patch): it passes by
+// default and fails under --fail-on warning.
+func TestCLIFailOn(t *testing.T) {
+	p := internalPlatform(t)
+	env := []string{"NETRC=" + p.netrc}
+	args := []string{"check", "--repo", p.dir, "--cache-dir", cacheDir}
+	if out, _, exit := cli(t, env, args...); exit != 0 || !strings.Contains(out, "FL-R003") {
+		t.Errorf("default: exit %d\n%s", exit, out)
+	}
+	if _, _, exit := cli(t, env, append(args, "--fail-on", "warning")...); exit != 1 {
+		t.Errorf("--fail-on warning: exit %d, want 1", exit)
+	}
+}
+
+func TestCLIFormats(t *testing.T) {
+	p := internalPlatform(t)
+	env := []string{"NETRC=" + p.netrc}
+	args := []string{"check", "--repo", p.dir, "--cache-dir", cacheDir, "--format"}
+
+	out, _, _ := cli(t, env, append(args, "sarif")...)
+	var sarif struct {
+		Version string
+		Runs    []struct {
+			Results []struct {
+				RuleID    string `json:"ruleId"`
+				Locations []struct {
+					PhysicalLocation struct {
+						ArtifactLocation struct{ URI string }
+					}
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &sarif); err != nil || sarif.Version != "2.1.0" || len(sarif.Runs) != 1 {
+		t.Fatalf("sarif: %v\n%.300s", err, out)
+	}
+	located := false
+	for _, res := range sarif.Runs[0].Results {
+		if res.RuleID == "FL-R003" && len(res.Locations) > 0 && res.Locations[0].PhysicalLocation.ArtifactLocation.URI == "apps/operator-green.yaml" {
+			located = true
+		}
+	}
+	if !located {
+		t.Errorf("sarif: the positional patch should be located in apps/operator-green.yaml\n%.600s", out)
+	}
+
+	out, _, _ = cli(t, env, append(args, "github")...)
+	if !strings.Contains(out, "::warning file=apps/operator-green.yaml,line=") || !strings.Contains(out, "FL-R003") {
+		t.Errorf("github annotations:\n%.400s", out)
+	}
+
+	// --output: the report goes to the file, readable text to stdout
+	file := filepath.Join(t.TempDir(), "report.sarif")
+	out, _, _ = cli(t, env, append(args, "sarif", "--output", file)...)
+	if b, err := os.ReadFile(file); err != nil || !json.Valid(b) {
+		t.Errorf("--output: %v", err)
+	}
+	if !strings.Contains(out, "clusters/prod:") || strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Errorf("--output should leave text on stdout:\n%.300s", out)
+	}
+}
+
+func TestCLIGraph(t *testing.T) {
+	p := internalPlatform(t)
+	env := []string{"NETRC=" + p.netrc}
+	args := []string{"graph", "--repo", p.dir, "--cache-dir", cacheDir}
+
+	dot, _, exit := cli(t, env, append(args, "clusters/prod")...)
+	if exit != 0 || !strings.HasPrefix(dot, "digraph") || !strings.Contains(dot, "operator-green") {
+		t.Errorf("dot: exit %d\n%.300s", exit, dot)
+	}
+	mermaid, _, exit := cli(t, env, append(args, "--format", "mermaid", "clusters/prod")...)
+	if exit != 0 || !strings.Contains(mermaid, "flowchart") && !strings.Contains(mermaid, "graph ") {
+		t.Errorf("mermaid: exit %d\n%.300s", exit, mermaid)
+	}
+	if _, errOut, exit := cli(t, env, append(args, "--format", "png", "clusters/prod")...); exit != 2 || !strings.Contains(errOut, "dot and mermaid") {
+		t.Errorf("unknown graph format: exit %d, %q", exit, errOut)
+	}
+	// the platform's .fluxlint.yaml names its one entrypoint
+	if out, _, exit := cli(t, env, args...); exit != 0 || out != dot {
+		t.Errorf("graph with the entrypoint from the config: exit %d", exit)
+	}
+	if _, errOut, exit := cli(t, nil, "graph", "--repo", t.TempDir()); exit != 2 || !strings.Contains(errOut, "one entrypoint") {
+		t.Errorf("graph without an entrypoint: exit %d, %q", exit, errOut)
+	}
+}
+
+// Observed reconcile durations add an expected time to the worst-case bound.
+func TestCLIObserved(t *testing.T) {
+	p := internalPlatform(t)
+	observed := filepath.Join(t.TempDir(), "observed.yaml")
+	if err := os.WriteFile(observed, []byte("flux-system/platform-api: 4s\nflux-system/apps: 20s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, exit := cli(t, []string{"NETRC=" + p.netrc}, "check", "--repo", p.dir, "--cache-dir", cacheDir, "--observed", observed)
+	if exit != 0 || !strings.Contains(out, "expected about") || !strings.Contains(out, "observed") {
+		t.Errorf("exit %d, stderr %q\n%.600s", exit, errOut, out)
+	}
+}

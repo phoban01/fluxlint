@@ -6,3 +6,5 @@ metadata:
   namespace: default
 data:
   value: "x"
+  # shell, not Flux substitution: c has no postBuild, so this is applied verbatim
+  script: echo "${HOME}"

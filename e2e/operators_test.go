@@ -628,3 +628,21 @@ func TestOCIArtifactTagMissing(t *testing.T) {
 		}
 	}
 }
+
+// A valuesFrom source nothing renders cannot be modelled: fluxlint says which
+// values it had to leave at chart defaults, and does not guess.
+func TestValuesFromSourceNotRendered(t *testing.T) {
+	p := internalPlatform(t)
+	edit(t, p.dir, "apps/telemetry.yaml", "  valuesFrom:\n", "  valuesFrom:\n    - {kind: Secret, name: agent-overrides}\n")
+	r := p.check(t)
+	got := r.rule("FL-X003")
+	if len(got) != 1 || got[0].Component != "HelmRelease/telemetry/metrics-agent" || !strings.Contains(got[0].text(), "valuesFrom Secret/agent-overrides is not rendered by any component") {
+		t.Errorf("want one render gap on the release: %+v", got)
+	}
+
+	// an optional source is allowed to be absent
+	edit(t, p.dir, "apps/telemetry.yaml", "{kind: Secret, name: agent-overrides}", "{kind: Secret, name: agent-overrides, optional: true}")
+	if got := p.check(t).rule("FL-X003"); len(got) != 0 {
+		t.Errorf("optional valuesFrom must not be reported: %+v", got)
+	}
+}
