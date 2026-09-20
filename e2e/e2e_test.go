@@ -774,3 +774,13 @@ func TestMisspeltFieldInPatchedBuiltin(t *testing.T) {
 	r := check(t, dir)
 	expectOnly(t, r, "FL-V003", "Deployment/podinfo/podinfo-green", "terminationGracePeriodSecond")
 }
+
+// The routine version bump edits cluster-vars. Without a dependsOn on
+// whatever applies that ConfigMap, `apps` can substitute the old version and
+// then sit on it for a full interval.
+func TestStaleSubstitutionOfSharedVariables(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "clusters/production/apps.yaml", "    - name: flux-system\n", "")
+	r := check(t, dir, "--offline")
+	expectOnly(t, r, "FL-T010", "flux-system/apps", "cluster-vars", "1h0m0s")
+}

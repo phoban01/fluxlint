@@ -5,6 +5,9 @@ metadata:
   namespace: flux-system
 spec:
   dependsOn:
+    # cluster-vars is applied by flux-system: wait for it to have
+    # applied the same revision before substituting from it
+    - name: flux-system
     - name: infra-configs
     - name: infra-capi-providers
   interval: 1h

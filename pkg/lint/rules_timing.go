@@ -59,6 +59,7 @@ func (r *run) timingRules() *Timing {
 	}
 
 	r.dependencyReview(g, s)
+	r.staleSubstitution()
 
 	// implicit ordering
 	for _, n := range ix.Needs {
@@ -107,6 +108,57 @@ func (r *run) timingRules() *Timing {
 		}
 	}
 	return t
+}
+
+// staleSubstitution: kustomize-controller reconciles every Kustomization of a
+// source as soon as a new revision arrives, and (before Flux 2.7, or without
+// the watch label) nothing re-triggers a Kustomization when a ConfigMap it
+// substitutes from changes. If that ConfigMap is applied by another
+// Kustomization of the same source, the reader can run first, substitute the
+// old values, and not run again until its interval has passed. A dependsOn
+// closes the gap: the controller then waits until the dependency has applied
+// the same revision ("dependency revision is not up to date").
+func (r *run) staleSubstitution() {
+	ix := r.ix
+	dg := graph.New()
+	for _, c := range ix.Tree.Components {
+		for _, d := range c.DependsOn {
+			dg.AddEdge(graph.Edge{From: c.Key(), To: c.DepKey(d)})
+		}
+	}
+	for _, c := range ix.Tree.Components {
+		if c.IsHelmRelease() {
+			continue
+		}
+		for _, sf := range c.SubstituteFrom {
+			index := ix.Wiring.configMaps
+			if sf.Kind == "Secret" {
+				index = ix.Wiring.secrets
+			}
+			for _, p := range index[nn(c.Namespace, sf.Name)] {
+				owner := p.Producer
+				if owner == nil || owner == c || owner.Source != c.Source || p.By == nil {
+					continue
+				}
+				if model.Str(p.By, "metadata", "labels", "reconcile.fluxcd.io/watch") == "Enabled" {
+					continue // Flux >= 2.7 re-triggers readers when it changes
+				}
+				if dg.Reachable(c.Key(), owner.Key(), nil) {
+					continue
+				}
+				advice := fmt.Sprintf("add dependsOn: %s to %s", owner.Name, c)
+				if owner.IsRoot && owner.Spec == nil {
+					advice = fmt.Sprintf("make %s depend on the Kustomization that applies %s", c, owner.Path)
+				}
+				if c.Within(owner) && owner.Wait {
+					advice = fmt.Sprintf("%s is an ancestor with wait: true, so a dependsOn would deadlock: apply %s from a separate Kustomization and depend on that", owner, p.By)
+				}
+				r.report("FL-T010", c, p.By,
+					fmt.Sprintf("substitutes from %s, which %s applies from the same source, without depending on it: a change to it can be read stale and then not re-read for %v (interval)", p.By, owner, c.Interval),
+					advice, "or, on Flux >= 2.7, label it reconcile.fluxcd.io/watch: Enabled")
+			}
+		}
+	}
 }
 
 func (r *run) componentOfEvent(ev string) *model.Component {

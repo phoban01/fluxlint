@@ -330,3 +330,28 @@ func TestWebhookScaledToZero(t *testing.T) {
 		}
 	}
 }
+
+func TestStaleSubstitution(t *testing.T) {
+	vars := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: versions\n  namespace: flux-system\ndata:\n  tag: v1\n"
+	reader := func(extra string) string {
+		return fmt.Sprintf(ksHeader, "apps", "apps", "  postBuild:\n    substituteFrom:\n      - kind: ConfigMap\n        name: versions\n"+extra)
+	}
+	build := func(clusterYAML string) string {
+		dir := t.TempDir()
+		write(t, dir, "clusters/prod/all.yaml", clusterYAML)
+		write(t, dir, "config/vars.yaml", vars)
+		write(t, dir, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n  namespace: default\ndata:\n  tag: ${tag}\n")
+		return dir
+	}
+	owner := fmt.Sprintf(ksHeader, "config", "config", "")
+
+	r := analyseDir(t, build(owner+"---\n"+reader("")), nil)
+	got := find(r, "FL-T010")
+	if len(got) != 1 || !strings.Contains(strings.Join(got[0].Detail, " "), "add dependsOn: config") {
+		t.Fatalf("reader and owner of the ConfigMap are unordered:\n%s", messages(r.Findings))
+	}
+	r = analyseDir(t, build(owner+"---\n"+reader("  dependsOn:\n    - name: config\n")), nil)
+	if got := find(r, "FL-T010"); len(got) != 0 {
+		t.Fatalf("dependsOn makes the controller wait for the same revision:\n%s", messages(got))
+	}
+}

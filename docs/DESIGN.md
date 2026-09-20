@@ -210,10 +210,13 @@ output is a **bound**, not a prediction, and is labelled as such.
   legitimately converging; also `timeout > interval`.
 - `FL-T009` **poll depth**: long `dependsOn` chains accumulate one dependency-requeue
   period per hop.
-- `FL-T010` **stale substitution** *(candidate — semantics to be verified against
-  each supported Flux version)*: a component substitutes from a ConfigMap that is
-  applied by a different component on the same source revision without depending on
-  it, so a variable change may only take effect one `interval` later.
+- `FL-T010` **stale substitution**: a component substitutes from a ConfigMap/Secret that
+  another component of the same source applies, with no `dependsOn` path to it. Verified
+  against kustomize-controller v1.4 (Flux 2.4): `checkDependencies` holds a dependent back
+  until a same-source dependency's `lastAppliedRevision` matches ("dependency revision is
+  not up to date"), and only sources are watched, so without the `dependsOn` the reader
+  may substitute old values and not run again for an `interval`. Skipped when the object
+  carries `reconcile.fluxcd.io/watch: Enabled` (Flux ≥ 2.7).
 - **Budget gate**: `timing.maxBootstrapBound: 30m` turns the bound into a CI
   regression check. Timing findings are otherwise advisory and never fail a build.
 

@@ -86,6 +86,7 @@ var Rules = []Rule{
 	{"FL-T006", "implicit-ordering", Warning, "A component imports something from another without any declared ordering. It converges only by failing and retrying."},
 	{"FL-T007", "retry-cliff", Warning, "No retryInterval and a long interval: one failed apply stalls the component for a full interval."},
 	{"FL-T008", "timeout-inversion", Warning, "A wait: true parent times out before the components it waits for are allowed to, so it flaps NotReady while they legitimately converge."},
+	{"FL-T010", "stale-substitution", Warning, "A Kustomization substitutes variables from a ConfigMap or Secret that another Kustomization of the same source applies, with no dependsOn between them. Both reconcile when a commit arrives; if the reader goes first it uses the old values and is not triggered again until its interval elapses. With a dependsOn, kustomize-controller waits until the dependency has applied the same revision."},
 	{"FL-T100", "bootstrap-budget", Error, "The worst-case bootstrap bound exceeds timing.maxBootstrapBound."},
 }
 

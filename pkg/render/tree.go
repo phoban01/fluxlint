@@ -31,6 +31,8 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 		IsRoot:    true,
 		Path:      entrypoint,
 		Prune:     true,
+		// whatever applies the entrypoint reads this repository
+		Source: model.Ref{Kind: cfg.RepoSource.Kind, Name: cfg.RepoSource.Name, Namespace: cfg.RepoSource.Namespace},
 	}
 	t := &model.Tree{RepoRoot: repoRoot, Entrypoint: entrypoint, Root: root, ByKey: map[string]*model.Component{}}
 	r := &renderer{repoRoot: repoRoot, cfg: cfg, tree: t, resolver: resolver,
