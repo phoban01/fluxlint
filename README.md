@@ -2,6 +2,7 @@
 
 [![ci](https://github.com/phoban01/fluxlint/actions/workflows/ci.yml/badge.svg)](https://github.com/phoban01/fluxlint/actions/workflows/ci.yml)
 [![license](https://img.shields.io/github/license/phoban01/fluxlint.svg)](LICENSE)
+[![docs](https://img.shields.io/badge/docs-phoban01.github.io%2Ffluxlint-blue)](https://phoban01.github.io/fluxlint/)
 
 fluxlint is a static analyser for [Flux](https://fluxcd.io) repositories. It finds
 changes that would stop a cluster from reconciling, before they merge and without a
@@ -296,11 +297,13 @@ the provider is reported as `FL-T006`.
 
 ## Guides
 
-* [What fluxlint renders](docs/RENDERING.md): sources, credentials, the cache, Helm,
+The documentation is at <https://phoban01.github.io/fluxlint/>.
+
+* [What fluxlint renders](docs/reference/rendering.md): sources, credentials, the cache, Helm,
   and the limits
-* [Component contracts](docs/CONTRACTS.md): how a controller or chart declares the
+* [Component contracts](docs/guides/contracts.md): how a controller or chart declares the
   CRDs and Secret keys it cannot start without
-* [Design](docs/DESIGN.md): the model, the rules and the roadmap
+* [Design](docs/design.md): the model, the rules and the roadmap
 
 ## Development
 

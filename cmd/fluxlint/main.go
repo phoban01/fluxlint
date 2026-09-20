@@ -49,6 +49,10 @@ func main() {
 	case "explain":
 		os.Exit(explain(os.Args[2:]))
 	case "rules":
+		if len(os.Args) > 2 && os.Args[2] == "--markdown" {
+			writeRulesDoc(os.Stdout)
+			break
+		}
 		for _, r := range lint.Rules {
 			fmt.Printf("%-8s %-26s %s\n", r.ID, r.Name, r.Severity)
 		}

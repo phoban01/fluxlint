@@ -1,0 +1,118 @@
+# Configuration
+
+fluxlint reads `.fluxlint.yaml` from the repository root, or the file you name with
+`--config`. Every field is optional, and a missing file means defaults. An unknown key
+is an error, so a misspelt setting cannot silently do nothing.
+
+```yaml
+entrypoints:
+  - clusters/production
+
+kubeVersion: "1.35.0"
+
+repoSource: {kind: GitRepository, name: flux-system, namespace: flux-system}
+
+externals:
+  namespaces: [tenant-a]
+  crdGroups: [example.internal]
+  secrets:
+    - {namespace: flux-system, name: sops-age, keys: [age.agekey]}
+  substitutions:
+    - kind: ConfigMap
+      name: cluster-info
+      variables: [cluster_name, region]
+  runtimeCRDs:
+    - group: infrastructure.cluster.x-k8s.io
+      providedBy: flux-system/capi-providers
+
+sources:
+  cacheDir: .fluxlint-cache
+  overrides:
+    - {kind: GitRepository, name: my-operator, path: ../my-operator}
+
+rules:
+  FL-T007: "off"
+  FL-R003: error
+
+assertions: []
+
+timing:
+  maxBootstrapBound: 30m
+  dependencyRequeue: 30s
+  dominantShare: 0.4
+```
+
+## entrypoints
+
+The directories your bootstrap Kustomizations point at, relative to the repository
+root. Entrypoints on the command line replace this list.
+
+## kubeVersion
+
+The Kubernetes version charts are rendered for. Charts read it as
+`.Capabilities.KubeVersion` and many refuse to render for a version they do not
+support, so set it to what your clusters run. The default is `1.35.0`.
+
+## repoSource
+
+The Flux source object that stands for this repository. A Kustomization whose
+`sourceRef` names it is rendered from your working tree. Any other source is fetched.
+The default is the `GitRepository` named `flux-system` in `flux-system`, which is what
+`flux bootstrap` creates.
+
+## externals
+
+Things that exist in the cluster but that nothing in Git creates. Keep the list short:
+everything on it is something fluxlint takes on trust.
+
+| Field | Meaning |
+| --- | --- |
+| `namespaces` | namespaces that already exist |
+| `crdGroups` | API groups whose CRDs are installed by something fluxlint cannot see. Objects in these groups are not validated and need no ordering. |
+| `secrets` | Secrets created out of band. `keys` is optional. When you give it, key references are checked against it. |
+| `substitutions` | ConfigMaps and Secrets read by `postBuild.substituteFrom` that Git does not contain, with the variables they provide |
+| `runtimeCRDs` | API groups whose CRDs appear only once a component is running |
+
+### runtimeCRDs
+
+Some CRDs are in no manifest. cluster-api-operator, for example, installs a provider's
+CRDs when it reconciles an `InfrastructureProvider`. Name the group and the component
+that causes the install:
+
+```yaml
+externals:
+  runtimeCRDs:
+    - group: infrastructure.cluster.x-k8s.io
+      providedBy: flux-system/capi-providers      # or HelmRelease/<namespace>/<name>
+```
+
+Unlike `crdGroups`, this keeps the ordering check. A consumer with no path from the
+provider is reported as `FL-T006`.
+
+## sources
+
+| Field | Meaning |
+| --- | --- |
+| `cacheDir` | where fetched sources are kept, relative to the repository root. The default is the user cache directory. `--cache-dir` wins over both. |
+| `overrides` | use a local directory in place of a source, for example a sibling checkout in CI. `path` is relative to the repository root. `namespace` is optional. |
+
+See [What fluxlint renders](rendering.md) for credentials and cache behaviour.
+
+## rules
+
+Change the severity of a rule, or turn it off. Values are `error`, `warning`, `info`
+and `off`. The [rules reference](rules.md) lists the defaults.
+
+## assertions
+
+Your own rules, written in CEL. See [Write your own rules](../guides/assertions.md).
+
+## timing
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `maxBootstrapBound` | none | fail with `FL-T100` when the worst-case bound is longer than this |
+| `dependencyRequeue` | `30s` | how often a controller checks a dependency that is not ready. Set it to your controllers' `--requeue-dependency`. |
+| `dominantShare` | `0.4` | the share of the bound above which one component is reported as dominant (`FL-T002`) |
+
+Durations use Go syntax: `90s`, `5m`, `1h30m`.

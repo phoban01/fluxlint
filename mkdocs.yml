@@ -1,0 +1,54 @@
+site_name: fluxlint
+site_description: Static analysis for Flux repositories
+site_url: https://phoban01.github.io/fluxlint/
+repo_url: https://github.com/phoban01/fluxlint
+repo_name: phoban01/fluxlint
+edit_uri: edit/main/docs/
+copyright: Apache 2.0 licensed
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle: {icon: material/weather-sunny, name: Light mode}
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Get started: get-started.md
+  - Guides:
+      - Check merge requests: guides/merge-requests.md
+      - Run in CI: guides/ci.md
+      - Shorten bootstrap time: guides/timing.md
+      - Write your own rules: guides/assertions.md
+      - Declare what a controller needs: guides/contracts.md
+      - Draw the graph: guides/graph.md
+  - Reference:
+      - Command line: reference/cli.md
+      - Configuration: reference/configuration.md
+      - Rules: reference/rules.md
+      - What fluxlint renders: reference/rendering.md
+  - Design: design.md
