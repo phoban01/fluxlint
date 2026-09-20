@@ -44,6 +44,23 @@ spec:
         - name: manager
           image: "example.test/widgets:{{ .Values.image.tag }}"
 `)
+		write(t, src, "widgets/templates/migrate.yaml", `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: example.test/migrate:1
+          envFrom:
+            - secretRef: {name: migration-credentials}
+`)
+		write(t, src, "widgets/templates/smoke.yaml", "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Release.Name }}-smoke\n  annotations:\n    helm.sh/hook: test\nspec:\n  containers:\n    - name: t\n      image: example.test/t:1\n")
 		write(t, src, "widgets/templates/role.yaml", "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: {{ .Release.Name }}\nrules: []\n")
 		ch, err := loader.Load(filepath.Join(src, "widgets"))
 		if err != nil {
@@ -107,6 +124,13 @@ spec:
   url: %s
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: migration-credentials
+  namespace: widgets-system
+stringData: {dsn: x}
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: widget-values
@@ -136,6 +160,17 @@ spec:
       name: widget-values
   values:
     replicas: 3
+  postRenderers:
+    - kustomize:
+        patches:
+          - target: {kind: Deployment}
+            patch: |
+              - op: add
+                path: /spec/template/spec/priorityClassName
+                value: platform-critical
+        images:
+          - name: example.test/widgets
+            newName: mirror.example.test/widgets
 `, repoURL, version))
 	write(t, dir, "widgets/widget.yaml", "apiVersion: example.test/v1\nkind: Widget\nmetadata:\n  name: w\n  namespace: default\n")
 	return dir
@@ -146,7 +181,7 @@ func TestHelmReleaseIsRenderedWithRealValues(t *testing.T) {
 	cache := t.TempDir()
 	r := analyseExternal(t, helmCluster(t, repoURL, "1.0.0", true), source.Options{CacheDir: cache})
 	if got := problems(r); len(got) != 0 {
-		t.Fatalf("problems: %v\n%+v", got, r.Findings)
+		t.Fatalf("problems: %v\n%s", got, messages(r.Findings))
 	}
 
 	hr := component(t, r, "HelmRelease/widgets-system/widgets")
@@ -163,11 +198,22 @@ func TestHelmReleaseIsRenderedWithRealValues(t *testing.T) {
 		t.Errorf("replicas = %v, want 3 (inline values win over valuesFrom)", got)
 	}
 	image := model.Str(model.List(deploy, "spec", "template", "spec", "containers")[0], "image")
-	if image != "example.test/widgets:from-configmap" {
+	if !strings.HasSuffix(image, "/widgets:from-configmap") {
 		t.Errorf("image = %q: valuesFrom ConfigMap not applied", image)
 	}
 	if deploy.Name() != "widgets-controller" || deploy.Namespace() != "widgets-system" {
 		t.Errorf("release name/namespace: %s", deploy)
+	}
+	// spec.postRenderers are applied on top of the chart output
+	if got := model.Str(deploy, "spec", "template", "spec", "priorityClassName"); got != "platform-critical" {
+		t.Errorf("postRenderer patch not applied: %q", got)
+	}
+	if !strings.HasPrefix(image, "mirror.example.test/widgets:") {
+		t.Errorf("postRenderer image rewrite not applied: %q", image)
+	}
+	// install/upgrade hooks create real objects; test hooks do not
+	if byKind["Job"] == nil || byKind["Pod"] != nil {
+		t.Errorf("want the pre-install Job and not the test Pod: %v", hr.Objects)
 	}
 	if ns := byKind["ClusterRole"].Namespace(); ns != "" {
 		t.Errorf("cluster-scoped object was given namespace %q", ns)
@@ -189,6 +235,21 @@ func TestHelmReleaseIsRenderedWithRealValues(t *testing.T) {
 	}
 	if got := s.Slack(ready); got != 5*time.Minute {
 		t.Errorf("release slack = %v, want 5m", got)
+	}
+}
+
+// A pre-install hook Job is a real pod with real needs.
+func TestHelmHookNeedsAreChecked(t *testing.T) {
+	dir := helmCluster(t, chartRepo(t), "1.0.0", true)
+	b, _ := os.ReadFile(filepath.Join(dir, "operators/all.yaml"))
+	without := strings.Replace(string(b), "  name: migration-credentials\n", "  name: something-else\n", 1)
+	if err := os.WriteFile(filepath.Join(dir, "operators/all.yaml"), []byte(without), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := analyseExternal(t, dir, source.Options{CacheDir: t.TempDir()})
+	got := find(r, "FL-R001")
+	if len(got) != 1 || !strings.Contains(got[0].Object, "Job/widgets-system/widgets-migrate") {
+		t.Fatalf("the hook Job's missing Secret must be reported:\n%s", messages(r.Findings))
 	}
 }
 

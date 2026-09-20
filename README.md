@@ -176,7 +176,11 @@ chart that cannot render with your values is an error (`FL-G008`).
 
 Set `kubeVersion` in `.fluxlint.yaml` to what your clusters run: charts gate on it.
 
-Not yet: `spec.postRenderers`, `valuesFrom.targetPath`, Helm hooks, chart
+`spec.postRenderers` (kustomize patches and images) are applied, and install/upgrade
+hooks are included: a pre-install Job is a real pod with real needs. Test and delete hooks
+are left out.
+
+Not yet: `valuesFrom.targetPath`, chart
 dependencies of Git-hosted charts, and `Bucket` sources. Where a spec uses something
 that is not modelled, fluxlint says so (`FL-X003`) instead of guessing, and components
 that cannot be rendered lower the confidence of rules that depend on them.

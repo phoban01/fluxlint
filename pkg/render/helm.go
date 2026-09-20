@@ -2,12 +2,15 @@ package render
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/phoban01/fluxlint/pkg/model"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v3/pkg/release"
 	"sigs.k8s.io/yaml"
 )
 
@@ -15,6 +18,7 @@ import (
 type helmSpec struct {
 	ReleaseName, Namespace string
 	Values                 map[string]any
+	PostRenderers          []overlay // spec.postRenderers[].kustomize, in order
 	Notes                  []string
 }
 
@@ -58,8 +62,10 @@ func (r *renderer) helmSpecOf(hr model.Object) helmSpec {
 	if inline, ok := model.Get(hr, "spec", "values").(map[string]any); ok {
 		s.Values = mergeValues(s.Values, inline)
 	}
-	if len(model.List(hr, "spec", "postRenderers")) > 0 {
-		s.Notes = append(s.Notes, "spec.postRenderers are not applied yet")
+	for _, pr := range model.List(hr, "spec", "postRenderers") {
+		if k := model.Get(pr, "kustomize"); k != nil {
+			s.PostRenderers = append(s.PostRenderers, overlay{Patches: model.List(k, "patches"), Images: model.List(k, "images")})
+		}
 	}
 	return s
 }
@@ -104,8 +110,21 @@ func helmTemplate(chartPath string, s helmSpec, kubeVersion string) ([]model.Obj
 		return nil, err
 	}
 
+	// Hooks that run on install or upgrade create real objects (Jobs, the
+	// ServiceAccounts and ConfigMaps they need); test and delete hooks do not
+	// take part in convergence.
+	manifest := rel.Manifest
+	for _, hook := range rel.Hooks {
+		for _, ev := range hook.Events {
+			if ev == release.HookPreInstall || ev == release.HookPostInstall || ev == release.HookPreUpgrade || ev == release.HookPostUpgrade {
+				manifest += "\n---\n" + hook.Manifest
+				break
+			}
+		}
+	}
+
 	var out []model.Object
-	for _, doc := range strings.Split("\n"+rel.Manifest, "\n---") {
+	for _, doc := range strings.Split("\n"+manifest, "\n---") {
 		var o model.Object
 		if err := yaml.Unmarshal([]byte(doc), &o); err != nil {
 			return nil, fmt.Errorf("chart %s rendered invalid YAML: %w", ch.Name(), err)
@@ -125,7 +144,39 @@ func helmTemplate(chartPath string, s helmSpec, kubeVersion string) ([]model.Obj
 		}
 		out = append(out, o)
 	}
+	for _, pr := range s.PostRenderers {
+		if out, err = postRender(out, pr); err != nil {
+			return nil, fmt.Errorf("postRenderers: %w", err)
+		}
+	}
 	return out, nil
+}
+
+// postRender applies one kustomize post-renderer the way helm-controller
+// does: the rendered manifests become the resources of a kustomization that
+// carries the patches and images.
+func postRender(objs []model.Object, ov overlay) ([]model.Object, error) {
+	dir, err := os.MkdirTemp("", "fluxlint-postrender-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	var all []byte
+	for _, o := range objs {
+		b, err := yaml.Marshal(o)
+		if err != nil {
+			return nil, err
+		}
+		all = append(append(all, "---\n"...), b...)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "all.yaml"), all, 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "kustomization.yaml"), []byte("resources:\n  - all.yaml\n"), 0o600); err != nil {
+		return nil, err
+	}
+	out, _, err := build(dir, ov)
+	return out, err
 }
 
 var clusterScopedKinds = map[string]bool{
