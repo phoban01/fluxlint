@@ -37,6 +37,67 @@ For every Kustomization that renders from that source, fluxlint then reports `FL
 CRDs that only exist at runtime are declared in the consuming repository's
 `externals.runtimeCRDs`, and count as installed by the component named there.
 
+## Where a contract lives
+
+fluxlint looks in three places and merges what it finds.
+
+| Place | Use it when |
+| --- | --- |
+| next to the manifests, in the Git repository or OCI artifact a Kustomization renders | you publish the manifests |
+| beside `Chart.yaml` | you publish a chart. Subchart contracts are merged in. |
+| attached to the container image | you publish the image, and others write the manifests |
+
+A contract in a Flux OCI artifact needs nothing special. `flux push artifact` packs the
+directory, and `fluxlint-contract.yaml` goes with it.
+
+### Attach the contract to the image
+
+The image is where the code is, so it is the most reliable carrier. A contract attached
+to `operator:v1.2.3` cannot describe another version, and it reaches everyone who
+deploys the image, whether they use your chart, your kustomize base or their own
+manifests.
+
+Push it from the pipeline that pushes the image:
+
+```bash
+docker push registry.example.com/platform/operator:v1.2.3
+fluxlint contract push -f fluxlint-contract.yaml registry.example.com/platform/operator:v1.2.3
+```
+
+```
+attached fluxlint-contract.yaml to registry.example.com/platform/operator:v1.2.3
+registry.example.com/platform/operator@sha256:6c3c…
+```
+
+The contract is stored as an OCI artifact that refers to the image, the same mechanism
+cosign signatures and SBOMs use. It does not change the image or its digest. Registries
+without the referrers API work too. Credentials come from your Docker config.
+`fluxlint contract push` refuses a file it could not read back.
+
+Read one with:
+
+```bash
+fluxlint contract pull registry.example.com/platform/operator:v1.2.3
+```
+
+In the repository that deploys the image, say which images to ask about:
+
+```yaml
+# .fluxlint.yaml
+contracts:
+  images:
+    - registry.example.com/platform/*
+```
+
+fluxlint then looks for a contract on every rendered container image that matches a
+pattern. It asks only about matching images, so it queries your registry about your
+images and nobody else's. The answer is cached with the other sources, so later runs
+and `--offline` runs need no network. A tag can move, so `--refresh` asks again. An
+image pinned by digest is never asked about twice.
+
+A Secret or ConfigMap that such a contract names without a namespace is expected in
+the namespace where the image runs.
+
 ## Keeping a contract true
 
 A contract is only worth having if it cannot drift from the code. The component's own

@@ -5,6 +5,7 @@ fluxlint check   [flags] [entrypoint ...]   analyse the repository
 fluxlint graph   [flags] [entrypoint]       print the dependency graph
 fluxlint explain <rule>                     describe a rule
 fluxlint rules                              list all rules
+fluxlint contract push|pull <image>         attach a contract to an image, or read one
 fluxlint version                            print the version
 ```
 
@@ -88,3 +89,15 @@ you name unless the config lists exactly one. See [Draw the graph](../guides/gra
 `fluxlint rules` lists every rule with its default severity. `fluxlint explain FL-G002`
 prints what a rule means and what to do about it. The same text is in the
 [rules reference](rules.md).
+
+## contract
+
+```
+fluxlint contract push [-f file] <image>
+fluxlint contract pull <image>
+```
+
+`push` attaches a [contract](../guides/contracts.md) to an image that is already in a
+registry. `-f` defaults to `fluxlint-contract.yaml`. `pull` prints the contract
+attached to an image, and exits `1` when there is none. `--timeout` bounds how long the
+registry may take, and defaults to one minute.

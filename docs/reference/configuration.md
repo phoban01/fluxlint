@@ -171,6 +171,19 @@ and its default severity.
 
 Your own rules, written in CEL. See [Write your own rules](../guides/assertions.md).
 
+## contracts
+
+```yaml
+contracts:
+  images:
+    - registry.example.com/platform/*
+```
+
+`images` lists patterns for container images that may carry a
+[contract](../guides/contracts.md#attach-the-contract-to-the-image). `*` matches any
+run of characters. Only images that match are looked up. With no patterns, fluxlint
+never asks a registry about an image.
+
 ## timing
 
 | Field | Default | Meaning |

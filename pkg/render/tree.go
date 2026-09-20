@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -142,6 +143,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 				continue
 			}
 			r.indexData(c.Objects)
+			r.imageContracts(ctx, c)
 			// substitution preserves order, so origins still line up
 			if origins := rawOrigins[c]; len(origins) == len(c.Objects) {
 				c.Origins = map[string]string{}
@@ -190,6 +192,8 @@ type renderer struct {
 	// ignores caches ignoreFilter per source root.
 	ignores map[string]func(string, bool) bool
 	builds  *BuildCache
+	// imagePatterns is cfg.Contracts.Images, compiled.
+	imagePatterns []*regexp.Regexp
 }
 
 // fetch resolves the external source of every component in level.

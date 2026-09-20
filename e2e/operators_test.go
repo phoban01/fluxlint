@@ -31,6 +31,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
@@ -259,6 +260,7 @@ spec:
 
 type platform struct {
 	dir, netrc string
+	registry   string // host of the in-process OCI registry
 }
 
 // internalPlatform writes the cluster repository.
@@ -419,7 +421,7 @@ kind: ConfigMap
 metadata: {name: telemetry-settings, namespace: telemetry}
 data: {sample_rate: "0.25"}
 `, charts))
-	return platform{dir: dir, netrc: netrc}
+	return platform{dir: dir, netrc: netrc, registry: oci}
 }
 
 func (p platform) check(t *testing.T, args ...string) result {
@@ -644,5 +646,73 @@ func TestValuesFromSourceNotRendered(t *testing.T) {
 	edit(t, p.dir, "apps/telemetry.yaml", "{kind: Secret, name: agent-overrides}", "{kind: Secret, name: agent-overrides, optional: true}")
 	if got := p.check(t).rule("FL-X003"); len(got) != 0 {
 		t.Errorf("optional valuesFrom must not be reported: %+v", got)
+	}
+}
+
+// A contract can travel with the image instead of the manifests. Here the
+// manifests are the cluster repository's own, so there is no upstream source to
+// carry a contract: it is attached to the image in the registry, and fluxlint
+// looks there for images that match contracts.images.
+func TestContractAttachedToTheImage(t *testing.T) {
+	p := internalPlatform(t)
+	env := []string{"NETRC=" + p.netrc}
+	image := p.registry + "/platform/reporter:v1"
+
+	img, err := random.Image(64, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := name.ParseReference(image)
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatal(err)
+	}
+	contract := filepath.Join(t.TempDir(), "fluxlint-contract.yaml")
+	os.WriteFile(contract, []byte("requires:\n  secrets:\n    - {name: reporter-token, keys: [token]}\n"), 0o644)
+
+	if _, errOut, exit := cli(t, env, "contract", "pull", image); exit != 1 || !strings.Contains(errOut, "no contract attached") {
+		t.Fatalf("pull before push: exit %d, %q", exit, errOut)
+	}
+	if out, errOut, exit := cli(t, env, "contract", "push", "-f", contract, image); exit != 0 || !strings.Contains(out, "attached") {
+		t.Fatalf("push: exit %d, %q", exit, errOut)
+	}
+	if out, _, exit := cli(t, env, "contract", "pull", image); exit != 0 || !strings.Contains(out, "reporter-token") {
+		t.Fatalf("pull: exit %d, %q", exit, out)
+	}
+	bad := filepath.Join(t.TempDir(), "bad.yaml")
+	os.WriteFile(bad, []byte("requires:\n  secret: []\n"), 0o644)
+	if _, errOut, exit := cli(t, env, "contract", "push", "-f", bad, image); exit != 2 || !strings.Contains(errOut, "unknown field") {
+		t.Errorf("an invalid contract must not be published: exit %d, %q", exit, errOut)
+	}
+
+	write(t, p.dir, "apps/reporter.yaml", fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata: {name: reporter, namespace: telemetry}
+spec:
+  selector: {matchLabels: {app: reporter}}
+  template:
+    metadata: {labels: {app: reporter}}
+    spec:
+      containers:
+        - name: reporter
+          image: %s
+`, image))
+
+	// lookups are opt-in: without a pattern nobody asks the registry
+	if r := p.check(t); len(r.rule("FL-C001")) != 0 {
+		t.Fatalf("no pattern, no lookup: %+v", r.rule("FL-C001"))
+	}
+	edit(t, p.dir, ".fluxlint.yaml", "kubeVersion:", "contracts:\n  images: [\""+p.registry+"/platform/*\"]\nkubeVersion:")
+	r := p.check(t)
+	found := false
+	for _, f := range r.rule("FL-C001") {
+		found = found || (f.Component == "flux-system/apps" && strings.Contains(f.text(), "requires Secret telemetry/reporter-token, which nothing creates"))
+	}
+	if !found {
+		t.Errorf("the image's contract names a Secret nothing creates: %+v", r.problems())
+	}
+
+	// the answer is cached: the same check passes offline
+	if r := p.check(t, "--offline"); len(r.rule("FL-C001")) == 0 {
+		t.Errorf("offline run lost the contract: %+v", r.problems())
 	}
 }

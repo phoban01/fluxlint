@@ -25,6 +25,7 @@ Usage:
   fluxlint graph   [flags] [entrypoint]       print the dependency graph (dot or mermaid)
   fluxlint explain <rule>                      describe a rule
   fluxlint rules                               list all rules
+  fluxlint contract push|pull <image>          attach a contract to an image, or read one
   fluxlint version                             print the version
 
 An entrypoint is the directory a cluster's bootstrap Kustomization points at
@@ -46,6 +47,8 @@ func main() {
 		os.Exit(check(os.Args[2:]))
 	case "graph":
 		os.Exit(graphCmd(os.Args[2:]))
+	case "contract":
+		os.Exit(contractCmd(os.Args[2:]))
 	case "explain":
 		os.Exit(explain(os.Args[2:]))
 	case "rules":

@@ -306,7 +306,7 @@ The documentation is at <https://phoban01.github.io/fluxlint/>.
 
 * [What fluxlint renders](docs/reference/rendering.md): sources, credentials, the cache, Helm,
   and the limits
-* [Component contracts](docs/guides/contracts.md): how a controller or chart declares the
+* [Component contracts](docs/guides/contracts.md): how a controller, chart or image declares the
   CRDs and Secret keys it cannot start without
 * [Design](docs/design.md): the model, the rules and the roadmap
 

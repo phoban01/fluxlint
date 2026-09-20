@@ -69,6 +69,8 @@ type Resolver struct {
 	down map[string]error
 	// indexes memoises Helm repository index downloads for the run.
 	indexes map[string]*indexCall
+	// contracts memoises lookups of contracts attached to images.
+	contracts map[string]*contractCall
 }
 
 // connectTimeout bounds how long an unreachable host can hold up a run.

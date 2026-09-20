@@ -47,6 +47,8 @@ type Config struct {
 	Assertions []Assertion `json:"assertions"`
 
 	Timing Timing `json:"timing"`
+
+	Contracts Contracts `json:"contracts"`
 }
 
 // Sources configures how external Flux sources are materialised.
@@ -224,4 +226,13 @@ type Rules struct {
 	// package fills them in, because it owns the catalogue.
 	Off   map[string]bool   `json:"-"`
 	Level map[string]string `json:"-"`
+}
+
+// Contracts configures where contracts are looked for beyond the sources
+// themselves.
+type Contracts struct {
+	// Images are patterns ("registry.example.com/platform/*") for container
+	// images to ask for an attached contract. Only images that match are looked
+	// up, so fluxlint asks your registry about your images and nobody else's.
+	Images []string `json:"images"`
 }
