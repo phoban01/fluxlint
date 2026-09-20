@@ -245,3 +245,22 @@ func TestLiteralVariableWithoutPostBuild(t *testing.T) {
 		t.Errorf("a suggestion must not fail the run: %v", p)
 	}
 }
+
+// An object can decode into its type and still be rejected by the API server.
+func TestValuesTheAPIServerRejects(t *testing.T) {
+	r := analyse(t, "values", nil)
+	got := find(r, "FL-V004")
+	if len(got) != 1 || got[0].Object != "Deployment/default/web" || got[0].File != "apps/web.yaml" {
+		t.Fatalf("want one finding on the Deployment, located in its file: %+v", got)
+	}
+	detail := strings.Join(got[0].Detail, "\n")
+	for _, want := range []string{"`selector` does not match template `labels`", "must be no more than 15 characters"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail lacks %q:\n%s", want, detail)
+		}
+	}
+	// the valid Service and the SOPS-encrypted Secret are left alone
+	if p := problems(r); len(p) != 1 {
+		t.Errorf("problems = %v, want only the Deployment: %+v", p, r.Findings)
+	}
+}

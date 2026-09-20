@@ -42,7 +42,11 @@ externals:
   runtimeCRDs:
     - {group: infrastructure.cluster.x-k8s.io, providedBy: flux-system/providers}
 rules:
-  FL-T007: "off"
+  default: all
+  disable: [FL-T007, timing]
+  enable: [critical-path]
+  severity:
+    positional-patch: error
 timing:
   maxBootstrapBound: 30m
   dependencyRequeue: "45s"
@@ -55,6 +59,9 @@ timing:
 	}
 	if c.KubeVersion != "1.33.2" || c.Timing.MaxBootstrapBound.Duration != 30*time.Minute || c.Timing.DependencyRequeue.Duration != 45*time.Second {
 		t.Errorf("got %q, %v, %v", c.KubeVersion, c.Timing.MaxBootstrapBound.Duration, c.Timing.DependencyRequeue.Duration)
+	}
+	if c.Rules.Default != "all" || len(c.Rules.Disable) != 2 || c.Rules.Enable[0] != "critical-path" || c.Rules.Severity["positional-patch"] != "error" {
+		t.Errorf("rules = %+v", c.Rules)
 	}
 	if len(c.Externals.Secrets) != 1 || c.Externals.Secrets[0].Keys[0] != "token" || c.Externals.RuntimeCRDs[0].ProvidedBy != "flux-system/providers" {
 		t.Errorf("externals = %+v", c.Externals)

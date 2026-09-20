@@ -54,7 +54,7 @@ func main() {
 			break
 		}
 		for _, r := range lint.Rules {
-			fmt.Printf("%-8s %-26s %s\n", r.ID, r.Name, r.Severity)
+			fmt.Printf("%-8s %-34s %-13s %s\n", r.ID, r.Name, r.Family(), r.Severity)
 		}
 	case "version", "--version":
 		fmt.Println(versionString())

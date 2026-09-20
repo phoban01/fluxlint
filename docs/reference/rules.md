@@ -89,6 +89,12 @@ Default severity: **error**
 
 An object of a built-in API group does not decode strictly into its Kubernetes type: an unknown or misspelt field, or a value of the wrong type. Flux applies with server-side apply, which rejects both.
 
+### FL-V004 invalid-value
+
+Default severity: **error**
+
+A built-in object has the right fields and types but a value the API server rejects: a selector that does not match the pod template, a port out of range or a port name over 15 characters, a volumeMount with no volume, a CronJob schedule that does not parse, a Service with two unnamed ports. Flux applies with a server-side dry run first, so one such object fails its whole Kustomization. The checks restate the API server's own validation and cover the common workload, Service, Ingress, RBAC and storage kinds; an object of another kind is not checked.
+
 ### FL-V002 pod-security
 
 Default severity: **error**

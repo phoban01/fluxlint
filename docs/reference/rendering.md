@@ -91,3 +91,6 @@ retries. A chart that cannot render with your values is reported as `FL-G008`.
 * A component that cannot be rendered is counted in the summary line. While any are
   missing, "nothing creates this Secret" is a warning marked low confidence, not an
   error, because the missing component may be what creates it.
+* A file encrypted with SOPS is not what reaches the API server, because Flux decrypts
+  it first. fluxlint cannot decrypt it, so it reads the object's name and keys and
+  leaves its values unvalidated.

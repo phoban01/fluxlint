@@ -173,9 +173,29 @@ func TestCLIObserved(t *testing.T) {
 // A typo in the rules: section must not silently leave the rule switched on.
 func TestCLIRejectsUnknownRuleOverride(t *testing.T) {
 	p := internalPlatform(t)
-	edit(t, p.dir, ".fluxlint.yaml", "kubeVersion:", "rules:\n  FL-R03: \"off\"\nkubeVersion:")
+	edit(t, p.dir, ".fluxlint.yaml", "kubeVersion:", "rules:\n  disable: [FL-R03]\nkubeVersion:")
 	_, errOut, exit := cli(t, []string{"NETRC=" + p.netrc}, "check", "--repo", p.dir, "--cache-dir", cacheDir)
-	if exit != 2 || !strings.Contains(errOut, `"FL-R03" is not a rule`) {
+	if exit != 2 || !strings.Contains(errOut, `"FL-R03" is not a rule or a family`) {
 		t.Errorf("exit %d, stderr %q", exit, errOut)
+	}
+}
+
+// rules: works like golangci-lint's linters: start from all or none, then
+// enable or disable single rules or whole families.
+func TestCLIRuleSelection(t *testing.T) {
+	p := internalPlatform(t)
+	env := []string{"NETRC=" + p.netrc}
+	args := []string{"check", "-v", "--repo", p.dir, "--cache-dir", cacheDir}
+
+	edit(t, p.dir, ".fluxlint.yaml", "kubeVersion:", "rules:\n  disable: [positional-patch, timing]\n  enable: [critical-path]\nkubeVersion:")
+	out, _, exit := cli(t, env, args...)
+	if exit != 0 || strings.Contains(out, "FL-R003") || !strings.Contains(out, "FL-T001") || strings.Contains(out, "FL-T004") {
+		t.Errorf("exit %d: the patch warning and all of timing but the critical path should be gone\n%.800s", exit, out)
+	}
+
+	edit(t, p.dir, ".fluxlint.yaml", "  disable: [positional-patch, timing]\n  enable: [critical-path]\n", "  default: none\n  enable: [FL-R003]\n  severity: {FL-R003: error}\n")
+	out, _, exit = cli(t, env, args...)
+	if exit != 1 || !strings.Contains(out, "error   FL-R003") || strings.Contains(out, "FL-T001") {
+		t.Errorf("exit %d: only the patch rule should run, as an error\n%.800s", exit, out)
 	}
 }

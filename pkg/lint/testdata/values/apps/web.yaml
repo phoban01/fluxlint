@@ -1,0 +1,52 @@
+---
+# decodes, and the API server rejects it twice over
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: web
+          image: example.test/web:1
+          ports:
+            - name: metrics-endpoint-http
+              containerPort: 9090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: default
+spec:
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+---
+# SOPS-encrypted: not what reaches the API server, so neither its sops block
+# nor its ENC[...] values are validated
+apiVersion: v1
+kind: Secret
+metadata:
+  name: web
+  namespace: default
+data:
+  token: ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]
+sops:
+  age:
+    - recipient: age1example
+      enc: "-----BEGIN AGE ENCRYPTED FILE-----"
+  lastmodified: "2026-01-01T00:00:00Z"
+  mac: ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]
+  encrypted_regex: ^(data|stringData)$
+  version: 3.9.0

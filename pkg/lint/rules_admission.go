@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/phoban01/fluxlint/pkg/model"
+	"github.com/phoban01/fluxlint/pkg/validate"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -38,6 +39,11 @@ var strictDecoder = kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, sch
 func (r *run) builtins() {
 	for _, c := range r.ix.Tree.Components {
 		for _, o := range c.Objects {
+			// a SOPS-encrypted file is not what reaches the API server: Flux decrypts
+			// it first, which removes the sops block and restores the real values
+			if _, encrypted := o["sops"]; encrypted {
+				continue
+			}
 			if !builtinGroups[o.Group()] || o.Kind() == "CustomResourceDefinition" {
 				continue
 			}
@@ -45,9 +51,16 @@ func (r *run) builtins() {
 			if err != nil {
 				continue
 			}
-			_, _, err = strictDecoder.Decode(data, nil, nil)
+			typed, _, err := strictDecoder.Decode(data, nil, nil)
 			switch {
 			case err == nil:
+				if errs := validate.Object(typed); len(errs) > 0 {
+					detail := make([]string, len(errs))
+					for i, e := range errs {
+						detail[i] = e.Error()
+					}
+					r.report("FL-V004", c, o, "would be rejected by the API server", detail...)
+				}
 			case runtime.IsNotRegisteredError(err):
 				r.reportAs(Warning, "FL-V003", c, o, fmt.Sprintf("%s %s is not a built-in API known to this version of fluxlint: removed, misspelt, or newer than the bundled Kubernetes types", o.APIVersion(), o.Kind()))
 			default:

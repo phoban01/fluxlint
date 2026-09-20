@@ -65,6 +65,7 @@ var Rules = []Rule{
 	{"FL-G006", "unserved-version", Error, "A custom resource uses an apiVersion that the CRD rendered for it does not serve. The apply fails with 'no matches for kind'."},
 	{"FL-V001", "schema-violation", Error, "A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Unknown fields are not reported: a structural schema prunes them."},
 	{"FL-V003", "invalid-builtin", Error, "An object of a built-in API group does not decode strictly into its Kubernetes type: an unknown or misspelt field, or a value of the wrong type. Flux applies with server-side apply, which rejects both."},
+	{"FL-V004", "invalid-value", Error, "A built-in object has the right fields and types but a value the API server rejects: a selector that does not match the pod template, a port out of range or a port name over 15 characters, a volumeMount with no volume, a CronJob schedule that does not parse, a Service with two unnamed ports. Flux applies with a server-side dry run first, so one such object fails its whole Kustomization. The checks restate the API server's own validation and cover the common workload, Service, Ingress, RBAC and storage kinds; an object of another kind is not checked."},
 	{"FL-V002", "pod-security", Error, "A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created."},
 	{"FL-R001", "unresolved-config-reference", Error, "A pod references a Secret or ConfigMap (or a key of one) that nothing creates: not a manifest, an ExternalSecret, a ClusterExternalSecret selecting the namespace, a cert-manager Certificate, nor externals.secrets. The pod stays in ContainerCreating / CreateContainerConfigError."},
 	{"FL-R002", "unresolved-identity-reference", Error, "A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Pods are not created, or cannot pull their image."},
@@ -121,7 +122,10 @@ func (r *run) report(id string, c *model.Component, o model.Object, msg string, 
 // override in the configuration still wins.
 func (r *run) reportAs(sev Severity, id string, c *model.Component, o model.Object, msg string, detail ...string) {
 	rule, _ := RuleByID(id)
-	if s, ok := r.cfg.Rules[id]; ok {
+	if r.cfg.Rules.Off[id] {
+		return
+	}
+	if s, ok := r.cfg.Rules.Level[id]; ok {
 		sev = Severity(s)
 	}
 	if sev == Off {

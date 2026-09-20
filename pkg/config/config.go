@@ -38,8 +38,8 @@ type Config struct {
 
 	Sources Sources `json:"sources"`
 
-	// Rules overrides severities: "error", "warning", "info" or "off".
-	Rules map[string]string `json:"rules"`
+	// Rules selects which rules run and how severe their findings are.
+	Rules Rules `json:"rules"`
 
 	// Assertions are repository-specific invariants, see Assertion.
 	Assertions []Assertion `json:"assertions"`
@@ -202,4 +202,24 @@ func Load(path string) (*Config, error) {
 	}
 	c.applyDefaults()
 	return c, nil
+}
+
+// Rules selects rules the way golangci-lint selects linters: start from all of
+// them or none, then enable or disable individual ones. A rule is named by its
+// ID ("FL-T007") or its name ("retry-cliff"); a family name ("timing") stands
+// for every rule in it.
+type Rules struct {
+	// Default is "all" (the default) or "none".
+	Default string `json:"default"`
+	// Enable adds rules. It matters when Default is "none".
+	Enable []string `json:"enable"`
+	// Disable removes rules. It matters when Default is "all".
+	Disable []string `json:"disable"`
+	// Severity overrides a rule's severity: "error", "warning" or "info".
+	Severity map[string]string `json:"severity"`
+
+	// Off and Level are what the above resolve to, keyed by rule ID. The lint
+	// package fills them in, because it owns the catalogue.
+	Off   map[string]bool   `json:"-"`
+	Level map[string]string `json:"-"`
 }

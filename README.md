@@ -25,6 +25,8 @@ fluxlint is pre-alpha. Rule IDs and the configuration format may still change.
 * finds missing namespaces, CRDs, sources and substitution variables
 * finds pods that reference a Secret, key, ConfigMap or ServiceAccount nothing creates
 * validates custom resources against the CRDs you install, and pods against Pod Security
+* checks built-in objects for values the API server rejects: a selector that does not
+  match its template, a port out of range, a mount with no volume
 * reports what a change will prune, orphan or fail to update
 * computes the worst-case bootstrap time and shows which timeouts and `dependsOn`
   entries cause it
@@ -280,8 +282,11 @@ externals:
     - group: infrastructure.cluster.x-k8s.io
       providedBy: flux-system/infra-capi-providers
 
-rules:
-  FL-T007: "off"                        # error, warning, info or off
+rules:                                  # like golangci-lint: all or none, then pick
+  default: all
+  disable: [retry-cliff]                # an ID, a name, or a family such as timing
+  severity:
+    positional-patch: error
 
 timing:
   maxBootstrapBound: 30m

@@ -31,8 +31,11 @@ sources:
     - {kind: GitRepository, name: my-operator, path: ../my-operator}
 
 rules:
-  FL-T007: "off"
-  FL-R003: error
+  default: all
+  disable: [retry-cliff, timing]
+  enable: [critical-path]
+  severity:
+    positional-patch: error
 
 assertions: []
 
@@ -100,9 +103,41 @@ See [What fluxlint renders](rendering.md) for credentials and cache behaviour.
 
 ## rules
 
-Change the severity of a rule, or turn it off. Values are `error`, `warning`, `info`
-and `off`. Name a rule by its ID (`FL-T007`) or its name (`retry-cliff`). A key that is
-not a rule is an error. The [rules reference](rules.md) lists the defaults.
+Choose which rules run, the way golangci-lint chooses linters: start from all of them
+or none, then turn single rules on or off.
+
+| Field | Meaning |
+| --- | --- |
+| `default` | `all` (the default) or `none` |
+| `disable` | rules to turn off. Use it with `default: all`. |
+| `enable` | rules to turn on. Use it with `default: none`. |
+| `severity` | a rule's severity: `error`, `warning` or `info` |
+
+Name a rule by its ID (`FL-T007`) or by its name (`retry-cliff`). In `enable` and
+`disable`, a family name stands for every rule in the family: `graph`, `substitution`,
+`validation`, `runtime`, `contracts`, `assertions`, `transitions`, `sources` or `timing`.
+`fluxlint rules` lists each rule with its family.
+
+A rule named on its own beats its family, so you can switch a family off and keep one
+rule from it:
+
+```yaml
+rules:
+  disable: [timing]
+  enable: [critical-path]
+```
+
+Or run only what you choose:
+
+```yaml
+rules:
+  default: none
+  enable: [graph, validation, FL-R001]
+```
+
+A name that is not a rule or a family is an error, so a typo cannot leave a rule
+running that you meant to turn off. The [rules reference](rules.md) lists every rule
+and its default severity.
 
 ## assertions
 

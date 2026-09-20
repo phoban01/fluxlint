@@ -25,7 +25,9 @@ cluster, so it sees the deadlock the next bootstrap would hit.
 
 **Objects the API server will reject.** Custom resources are validated against the
 CRDs your repository installs, including the CRD author's CEL rules. Built-in objects
-are checked the way the API server checks them. Pods are checked against the Pod
+are decoded strictly, then checked for values the API server refuses: a selector that
+does not match its pod template, a port out of range, a volume mount with no volume, a
+CronJob schedule that does not parse. Pods are checked against the Pod
 Security level of their namespace.
 
 **Pods that cannot start.** A Secret, a key, a ConfigMap, a ServiceAccount or a pull
