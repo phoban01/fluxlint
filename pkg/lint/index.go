@@ -99,6 +99,14 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 	for _, n := range cfg.Externals.Namespaces {
 		extNS[n] = true
 	}
+	runtimeCRDs := map[string]*model.Component{}
+	for _, rc := range cfg.Externals.RuntimeCRDs {
+		// A provider absent from this entrypoint is fine as long as nothing
+		// here uses the group; if something does, it surfaces as FL-G005.
+		if p := t.ByKey[rc.ProvidedBy]; p != nil {
+			runtimeCRDs[rc.Group] = p
+		}
+	}
 	extGroups := map[string]bool{}
 	for _, g := range cfg.Externals.CRDGroups {
 		extGroups[g] = true
@@ -128,6 +136,8 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 				switch provs := ix.CRDs[o.GK()]; {
 				case len(provs) > 0:
 					ix.addNeed(n, provs)
+				case runtimeCRDs[g] != nil:
+					ix.addNeed(n, []*model.Component{runtimeCRDs[g]})
 				case !extGroups[g] && !fluxGroups[g]:
 					ix.MissingCRDs = append(ix.MissingCRDs, n)
 				}

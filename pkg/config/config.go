@@ -74,6 +74,18 @@ type Externals struct {
 	// CRDGroups are API groups whose CRDs are installed out of band or by a
 	// component fluxlint cannot render yet.
 	CRDGroups []string `json:"crdGroups"`
+	// RuntimeCRDs are API groups whose CRDs appear only once a component is
+	// running (an operator that installs providers, a controller that
+	// registers its own types). Unlike CRDGroups they keep their ordering:
+	// consumers must still come after ProvidedBy is Ready.
+	RuntimeCRDs []RuntimeCRD `json:"runtimeCRDs"`
+}
+
+type RuntimeCRD struct {
+	Group string `json:"group"`
+	// ProvidedBy is a component key: "namespace/name" for a Kustomization,
+	// "HelmRelease/namespace/name" for a HelmRelease.
+	ProvidedBy string `json:"providedBy"`
 }
 
 type ExternalSubstitution struct {

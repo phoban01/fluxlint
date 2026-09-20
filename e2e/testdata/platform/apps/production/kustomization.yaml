@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # blue/green: both components enabled, blue drained (replicas 0) as the
+  # rollback target
+  - ../base/podinfo/blue
+  - ../base/podinfo/green
+  - ../base/podinfo-helm/release.yaml
+  - ../base/rbac/team-a.yaml
+  - cluster-templates/aws-cluster-template.yaml

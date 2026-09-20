@@ -1,0 +1,49 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: podinfo-green
+  namespace: podinfo
+spec:
+  interval: 30m
+  url: https://github.com/stefanprodan/podinfo
+  ref:
+    tag: ${podinfo_green_version}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: podinfo-green
+  namespace: podinfo
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 3m
+  sourceRef:
+    kind: GitRepository
+    name: podinfo-green
+  path: ./kustomize
+  prune: true
+  wait: true
+  targetNamespace: podinfo
+  nameSuffix: -green
+  images:
+    - name: ghcr.io/stefanprodan/podinfo
+      newTag: ${podinfo_green_version}
+  patches:
+    - target:
+        kind: HorizontalPodAutoscaler
+        name: podinfo
+      patch: |
+        $patch: delete
+        apiVersion: autoscaling/v2
+        kind: HorizontalPodAutoscaler
+        metadata:
+          name: podinfo
+    - target:
+        kind: Deployment
+        name: podinfo
+      patch: |
+        - op: add
+          path: /spec/replicas
+          value: ${podinfo_green_scale}

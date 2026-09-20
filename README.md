@@ -121,6 +121,39 @@ dependencies of Git-hosted charts, and `Bucket` sources. Where a spec uses somet
 that is not modelled, fluxlint says so (`FL-X003`) instead of guessing, and components
 that cannot be rendered lower the confidence of rules that depend on them.
 
+## Runtime-installed CRDs
+
+Some CRDs exist only once a controller is running — cluster-api-operator installs a
+provider's CRDs when it reconciles an `InfrastructureProvider`. Nothing in Git renders
+them, but their consumers must still be ordered after whatever triggers the install:
+
+```yaml
+externals:
+  runtimeCRDs:
+    - group: infrastructure.cluster.x-k8s.io
+      providedBy: flux-system/infra-capi-providers   # or HelmRelease/<ns>/<name>
+```
+
+Unlike `crdGroups`, this keeps the ordering check: a consumer with no path from the
+provider is reported as `FL-T006`.
+
+## Development
+
+```bash
+make test   # hermetic: synthetic fixtures, local git repos, in-process registry and chart server
+make e2e    # the built binary against e2e/testdata/platform
+```
+
+`e2e/testdata/platform` is a two-cluster repository laid out the way platform teams
+usually do it — `clusters/<env>`, layered `infrastructure/` and `apps/`, a shared
+variables ConfigMap, blue/green nested Kustomizations — built from real pinned upstreams:
+cert-manager, kyverno, cluster-api-operator with the AWS provider, and podinfo both from
+its Git repository and as an OCI chart. The baseline must be clean and analyse in under
+10s offline; every other test seeds one defect (a HelmRepository behind a `dependsOn`,
+a namespace created by the consumer's own child, a chart-installed CRD with no ordering,
+a `wait: true` parent that times out before its releases, a version bump to a tag that
+does not exist, values a chart's schema rejects, …) and asserts that fluxlint names it.
+
 ## Licence
 
 Apache-2.0
