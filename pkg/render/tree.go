@@ -21,7 +21,7 @@ import (
 
 // Tree renders everything reachable from entrypoint (relative to repoRoot).
 // A nil resolver leaves components with external sources unrendered.
-func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, resolver *source.Resolver) (*model.Tree, error) {
+func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, resolver *source.Resolver, opts ...Option) (*model.Tree, error) {
 	repoRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -38,6 +38,9 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 	t := &model.Tree{RepoRoot: repoRoot, Entrypoint: entrypoint, Root: root, ByKey: map[string]*model.Component{}}
 	r := &renderer{repoRoot: repoRoot, cfg: cfg, tree: t, resolver: resolver,
 		data: map[string]map[string]string{}, sources: map[string]model.Object{}}
+	for _, opt := range opts {
+		opt(r)
+	}
 
 	// rawOrigins[c][i] is the file c.Raw[i] came from.
 	rawOrigins := map[*model.Component][]string{}
@@ -62,6 +65,13 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 			helmWG.Add(1)
 			go func() {
 				defer helmWG.Done()
+				key := chartKey(c, spec, cfg.KubeVersion)
+				if raw, contract, notes, ok := r.builds.chart(key); ok {
+					c.Raw, c.Contract = raw, contract
+					c.RenderNotes = append(c.RenderNotes, notes...)
+					return
+				}
+				specNotes := len(c.RenderNotes)
 				ch, err := loader.Load(c.SourceRoot)
 				var raw []model.Object
 				if err == nil {
@@ -78,6 +88,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 					return
 				}
 				c.Raw = raw
+				r.builds.storeChart(key, raw, c.Contract, c.RenderNotes[specNotes:])
 			}()
 		}
 		for _, c := range level {
@@ -92,9 +103,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 				base = c.SourceRoot
 			}
 			ov := overlayFromSpec(c.Spec)
-			if !hasKustomization(filepath.Join(base, c.Path)) {
-				ov.Ignored = ignoreFilter(base, r.sources[c.Source.String()])
-			}
+			ov.Ignored, ov.Root, ov.Cache = r.ignored(base, c.Source.String()), base, r.builds
 			raw, origins, err := build(filepath.Join(base, c.Path), ov)
 			if err != nil {
 				c.BuildErr, c.Opaque = err, "build failed"
@@ -108,6 +117,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 				r.adoptBootstrap(c)
 				// the bootstrap Kustomization may itself carry patches/images
 				if ov := overlayFromSpec(c.Spec); !ov.empty() {
+					ov.Ignored, ov.Root, ov.Cache = r.ignored(repoRoot, c.Source.String()), repoRoot, r.builds
 					if raw, origins, err := build(filepath.Join(repoRoot, c.Path), ov); err != nil {
 						c.BuildErr, c.Opaque = err, "build failed"
 					} else {
@@ -177,6 +187,9 @@ type renderer struct {
 	data map[string]map[string]string
 	// sources is Ref.String() -> rendered Flux source object.
 	sources map[string]model.Object
+	// ignores caches ignoreFilter per source root.
+	ignores map[string]func(string, bool) bool
+	builds  *BuildCache
 }
 
 // fetch resolves the external source of every component in level.

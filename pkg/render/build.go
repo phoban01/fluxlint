@@ -12,7 +12,6 @@ import (
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/provider"
 	"sigs.k8s.io/kustomize/api/types"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
 )
 
@@ -43,7 +42,11 @@ type overlay struct {
 	NameSuffix      string
 	// Ignored reports paths the source leaves out of its artifact (see
 	// ignoreFilter). It narrows the generated resource list; nil ignores nothing.
-	Ignored func(path string, isDir bool) bool
+	Ignored func(path string, isDir bool) bool `json:"-"`
+	// Root is the top of the source dir belongs to and Cache shares builds
+	// between renders (see BuildCache). Both are optional.
+	Root  string      `json:"-"`
+	Cache *BuildCache `json:"-"`
 }
 
 func (o overlay) empty() bool {
@@ -80,6 +83,19 @@ func build(dir string, ov overlay) ([]model.Object, []string, error) {
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return nil, nil, fmt.Errorf("path %q is not a directory", dir)
 	}
+	view := newIgnoreFS(ov.Ignored)
+	root := ""
+	if ov.Cache != nil && ov.Root != "" {
+		if root, err = filepath.Abs(ov.Root); err == nil {
+			root, err = filepath.EvalSymlinks(root)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		if objs, origins, ok := ov.Cache.lookup(root, dir, ov, view); ok {
+			return objs, origins, nil
+		}
+	}
 
 	// Always build through a wrapper: it carries the Flux overlay and turns on
 	// kustomize's origin annotations, which is how findings get a file.
@@ -91,7 +107,8 @@ func build(dir string, ov overlay) ([]model.Object, []string, error) {
 	if target, err = filepath.EvalSymlinks(target); err != nil {
 		return nil, nil, err
 	}
-	if err := writeWrapper(target, dir, ov); err != nil {
+	rec := newRecorder(view, root, target)
+	if err := writeWrapper(target, dir, ov, rec); err != nil {
 		return nil, nil, err
 	}
 
@@ -107,7 +124,7 @@ func build(dir string, ov overlay) ([]model.Object, []string, error) {
 	}
 	opts := krusty.MakeDefaultOptions()
 	opts.LoadRestrictions = types.LoadRestrictionsNone
-	rm, err := krusty.MakeKustomizer(opts).Run(filesys.MakeFsOnDisk(), target)
+	rm, err := krusty.MakeKustomizer(opts).Run(rec, target)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -121,6 +138,9 @@ func build(dir string, ov overlay) ([]model.Object, []string, error) {
 		o := model.Object(m)
 		origins = append(origins, takeOrigin(o, target))
 		out = append(out, o)
+	}
+	if root != "" {
+		ov.Cache.store(root, dir, ov, rec, out, origins)
 	}
 	return out, origins, nil
 }
@@ -157,13 +177,16 @@ func takeOrigin(o model.Object, base string) string {
 	return filepath.Clean(filepath.Join(base, p))
 }
 
-func writeWrapper(tmp, dir string, ov overlay) error {
+func writeWrapper(tmp, dir string, ov overlay, rec *recorder) error {
 	rel := func(p string) (string, error) { return filepath.Rel(tmp, p) }
 	k := map[string]any{
 		"apiVersion": "kustomize.config.k8s.io/v1beta1",
 		"kind":       "Kustomization",
 	}
 	var resources []string
+	for _, f := range kustomizationFiles {
+		rec.note('s', filepath.Join(dir, f))
+	}
 	if hasKustomization(dir) {
 		r, err := rel(dir)
 		if err != nil {
@@ -171,7 +194,7 @@ func writeWrapper(tmp, dir string, ov overlay) error {
 		}
 		resources = []string{r}
 	} else {
-		found, err := generateResources(dir, ov.Ignored)
+		found, err := generateResources(dir, ov.Ignored, rec.note)
 		if err != nil {
 			return err
 		}
@@ -224,7 +247,10 @@ func writeWrapper(tmp, dir string, ov overlay) error {
 // it does in the cluster — except that a sub-directory with its own
 // kustomization is included as a directory and not descended into. Files that
 // source-controller leaves out of every artifact are skipped.
-func generateResources(dir string, ignored func(string, bool) bool) ([]string, error) {
+func generateResources(dir string, ignored func(string, bool) bool, note func(op byte, path string)) ([]string, error) {
+	if note == nil {
+		note = func(byte, string) {}
+	}
 	rf := provider.NewDefaultDepProvider().GetResourceFactory()
 	var out []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) (walkErr error) {
@@ -241,15 +267,22 @@ func generateResources(dir string, ignored func(string, bool) bool) ([]string, e
 			if p != dir && excludedDirs[d.Name()] {
 				return filepath.SkipDir
 			}
+			if p != dir {
+				for _, f := range kustomizationFiles {
+					note('s', filepath.Join(p, f))
+				}
+			}
 			if p != dir && hasKustomization(p) {
 				out = append(out, p)
 				return filepath.SkipDir
 			}
+			note('d', p) // a file added here later changes the result
 			return nil
 		}
 		if ext := filepath.Ext(p); (ext != ".yaml" && ext != ".yml") || excludedFiles[d.Name()] {
 			return nil
 		}
+		note('f', p)
 		content, err := os.ReadFile(p)
 		if err != nil {
 			return err

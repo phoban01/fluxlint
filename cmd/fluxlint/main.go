@@ -166,6 +166,8 @@ func check(args []string) int {
 	}
 
 	start := time.Now()
+	// the base and the head differ in a few files: build the rest once
+	builds := render.NewBuildCache()
 	results := make([]*lint.Result, len(entrypoints))
 	errs := make([]error, len(entrypoints))
 	var wg sync.WaitGroup
@@ -173,7 +175,7 @@ func check(args []string) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tree, err := render.Tree(context.Background(), o.repo, ep, cfg, resolver)
+			tree, err := render.Tree(context.Background(), o.repo, ep, cfg, resolver, render.WithBuildCache(builds))
 			if err != nil {
 				errs[i] = fmt.Errorf("%s: %w", ep, err)
 				return
@@ -186,7 +188,7 @@ func check(args []string) int {
 			if st, err := os.Stat(filepath.Join(baseDir, ep)); err != nil || !st.IsDir() {
 				return
 			}
-			baseTree, err := render.Tree(context.Background(), baseDir, ep, cfg, resolver)
+			baseTree, err := render.Tree(context.Background(), baseDir, ep, cfg, resolver, render.WithBuildCache(builds))
 			if err != nil {
 				errs[i] = fmt.Errorf("%s at %s: %w", ep, o.base, err)
 				return
