@@ -55,6 +55,7 @@ func TestMain(m *testing.M) {
 type finding struct {
 	Rule, Severity, Entrypoint, Component, Object, Message string
 	Detail                                                 []string
+	Existing                                               bool
 }
 
 type result struct {
@@ -629,4 +630,125 @@ entrypoints:
 	edit(t, dir, "clusters/production/cluster-vars.yaml", `podinfo_live: "green"`, `podinfo_live: "blue"`)
 	r := check(t, dir)
 	expectOnly(t, r, "FL-A001", "Deployment/podinfo/podinfo-blue", "scaled to zero")
+}
+
+// ---------------------------------------------------------------------------
+// Transitions: fluxlint check --base <ref>
+
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	dir := repo(t)
+	for _, args := range [][]string{
+		{"init", "--quiet", "--initial-branch=main"},
+		{"add", "-A"},
+		{"-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "--quiet", "-m", "base"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return dir
+}
+
+func commit(t *testing.T, dir, msg string) {
+	t.Helper()
+	for _, args := range [][]string{{"add", "-A"}, {"-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "--quiet", "-m", msg}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// Adopting fluxlint on a repository with existing debt: the run fails only on
+// what the merge request introduces.
+func TestBaseHidesExistingDebt(t *testing.T) {
+	dir := gitRepo(t)
+	edit(t, dir, "apps/base/namespaces/namespaces.yaml", "  name: team-a\n", "  name: team-b\n")
+	commit(t, dir, "debt that is already on main")
+
+	if r := check(t, dir, "--offline"); r.ExitCode != 1 {
+		t.Fatalf("without --base the debt fails the run, exit = %d", r.ExitCode)
+	}
+	r := check(t, dir, "--offline", "--base", "HEAD")
+	if r.ExitCode != 0 {
+		t.Fatalf("nothing changed since HEAD, exit = %d: %+v", r.ExitCode, r.problems())
+	}
+
+	// now the merge request adds a problem of its own
+	edit(t, dir, "clusters/production/cluster-vars.yaml", "  cluster_name: \"management\"\n", "")
+	r = check(t, dir, "--offline", "--base", "HEAD")
+	if r.ExitCode != 1 {
+		t.Errorf("a new error must fail the run, exit = %d", r.ExitCode)
+	}
+	var fresh []string
+	for _, f := range r.Findings {
+		if f.Severity == "error" && !f.Existing {
+			fresh = append(fresh, f.Rule)
+		}
+	}
+	if len(fresh) != 1 || fresh[0] != "FL-S001" {
+		t.Errorf("only the new undefined variable is fresh, got %v", fresh)
+	}
+}
+
+// Retiring the blue colour: its Kustomization prunes, so everything it rendered
+// from the external podinfo repository is deleted from the cluster.
+func TestBaseReportsWhatWillBePruned(t *testing.T) {
+	dir := gitRepo(t)
+	edit(t, dir, "apps/production/kustomization.yaml", "  - ../base/podinfo/blue\n", "")
+	r := check(t, dir, "--offline", "--base", "HEAD")
+	if r.ExitCode != 0 {
+		t.Errorf("a prune is information, not a failure: exit = %d %+v", r.ExitCode, r.problems())
+	}
+	var text string
+	for _, f := range append(r.rule("FL-D001"), r.rule("FL-D004")...) {
+		text += f.text() + "\n"
+	}
+	for _, want := range []string{"Deployment/podinfo/podinfo-blue", "Service/podinfo/podinfo-blue", "Kustomization/podinfo/podinfo-blue"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("transition report lacks %s:\n%s", want, text)
+		}
+	}
+}
+
+// A chart upgrade that changes a Deployment's selector cannot be applied in place.
+func TestBaseImmutableFieldChange(t *testing.T) {
+	dir := gitRepo(t)
+	edit(t, dir, "apps/base/podinfo-helm/release.yaml", "    replicaCount: 2\n", "    replicaCount: 2\n    fullnameOverride: renamed\n")
+	r := check(t, dir, "--offline", "--base", "HEAD")
+	// a rename is delete + create, which is fine
+	if got := r.rule("FL-D002"); len(got) != 0 {
+		t.Errorf("rename is not an immutable change: %+v", got)
+	}
+
+	dir = gitRepo(t)
+	edit(t, dir, "apps/base/podinfo/green/podinfo.yaml", "  patches:\n", `  patches:
+    - target:
+        kind: Deployment
+        name: podinfo
+      patch: |
+        - op: replace
+          path: /spec/selector/matchLabels/app
+          value: podinfo-v2
+        - op: replace
+          path: /spec/template/metadata/labels/app
+          value: podinfo-v2
+`)
+	r = check(t, dir, "--offline", "--base", "HEAD")
+	if r.ExitCode != 1 {
+		t.Errorf("an immutable change fails the run, exit = %d", r.ExitCode)
+	}
+	found := false
+	for _, f := range r.rule("FL-D002") {
+		found = found || (strings.Contains(f.text(), "Deployment/podinfo/podinfo-green") && strings.Contains(f.text(), "spec.selector"))
+	}
+	if !found {
+		t.Errorf("selector change on the externally rendered Deployment not reported: %+v", r.problems())
+	}
 }

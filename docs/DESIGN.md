@@ -269,7 +269,7 @@ pkg/report              text, JSON, SARIF, GitLab Code Quality, GitHub annotatio
 | **M3a** runtime wiring (done) | `FL-R001–4`: Secret/ConfigMap/key, ServiceAccount and pull-secret resolution with ExternalSecret, ClusterExternalSecret selector, Certificate and SealedSecret producers; runtime needs join the deadlock graph; positional patches resolved against the rendered target; webhook backends |
 | **M3b** runtime wiring | `FL-R*`, Pod Security, webhook analysis, RBAC-as-imports |
 | **M4** timing | interval weights, slack, `FL-T*`, observed durations, budget gate, graph export |
-| **M5** transitions | `--base` diff analysis, incremental rendering |
+| **M5** transitions (done: `--base`, new-findings-only gating, `FL-D001–4` prune / immutable / ownership move / orphaned; incremental rendering still open) | `--base` diff analysis, incremental rendering |
 | **M6a** assertions (done) | CEL over rendered objects with inherited variable scope, `FL-A001/2`, `mustMatch` |
 | **M6b** contracts | contract format, envtest recipe for operator authors, CEL assertions |
 | **1.0** | rule IDs frozen, Flux version support matrix, docs site |

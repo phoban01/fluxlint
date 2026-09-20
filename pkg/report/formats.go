@@ -1,8 +1,6 @@
 package report
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,7 +39,7 @@ func reportable(s Summary, verbose bool) []lint.Finding {
 	var out []lint.Finding
 	for _, r := range s.Results {
 		for _, f := range r.Findings {
-			if f.Severity == lint.Info && !verbose {
+			if f.Existing || (f.Severity == lint.Info && !verbose) {
 				continue
 			}
 			out = append(out, f)
@@ -73,11 +71,10 @@ func GitLab(w io.Writer, s Summary, verbose bool) error {
 		path, line := location(f)
 		// stable across line moves and unrelated edits, so GitLab can tell
 		// new findings from existing ones
-		sum := sha256.Sum256([]byte(strings.Join([]string{f.Rule, f.Entrypoint, f.Component, f.Object, f.Message}, "\x00")))
 		issues = append(issues, issue{
 			Description: fmt.Sprintf("%s %s: %s", f.Rule, f.Name, headline(f)),
 			CheckName:   f.Rule,
-			Fingerprint: hex.EncodeToString(sum[:]),
+			Fingerprint: f.Fingerprint(),
 			Severity:    severity[f.Severity],
 			Location:    loc{Path: path, Lines: lines{Begin: line}},
 		})

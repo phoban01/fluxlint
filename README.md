@@ -55,6 +55,26 @@ clusters/production: 12 components (3 not rendered), 214 objects
   info    FL-T001 critical-path  worst-case bootstrap bound is 12m30s
 ```
 
+## Merge requests: `--base`
+
+```bash
+fluxlint check --base origin/main
+```
+
+renders both commits (the base via `git archive`, never touching your working tree) and
+
+- **fails only on findings the change introduces** — existing debt is counted but does
+  not block, so fluxlint can be made a required check on day one;
+- reports what reconciling the change will do to a cluster running the base:
+  objects Flux will **prune** (a warning when namespaces, CRDs, PVCs, StatefulSets or
+  Secrets are among them), objects **orphaned** because their Kustomization has
+  `prune: false`, updates to **immutable fields** that the API server will reject
+  (workload selectors, `volumeClaimTemplates`, Job templates, `roleRef` …) unless the
+  Kustomization sets `force: true`, and objects that **move between Kustomizations**.
+
+This sees through charts and external repositories: a chart upgrade that changes a
+Deployment's selector is reported against the HelmRelease whose version you bumped.
+
 ## In CI
 
 Findings carry the repository file and line of the manifest to fix. When the offending
@@ -65,7 +85,7 @@ Kustomization which pulls it in.
 # GitLab: inline in the merge request widget
 fluxlint:
   script:
-    - fluxlint check --format gitlab --output gl-code-quality-report.json
+    - fluxlint check --base origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME --format gitlab --output gl-code-quality-report.json
   artifacts:
     when: always
     reports:

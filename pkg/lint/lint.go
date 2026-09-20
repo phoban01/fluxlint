@@ -2,8 +2,6 @@
 package lint
 
 import (
-	"sort"
-
 	"github.com/phoban01/fluxlint/pkg/config"
 	"github.com/phoban01/fluxlint/pkg/model"
 )
@@ -48,6 +46,9 @@ type Finding struct {
 	Line       int      `json:"line,omitempty"`
 	Message    string   `json:"message"`
 	Detail     []string `json:"detail,omitempty"`
+	// Existing is set by Compare when the same finding is present at the base
+	// commit: it does not fail a --base run.
+	Existing bool `json:"existing,omitempty"`
 }
 
 // Rules is the catalogue, in report order.
@@ -70,6 +71,10 @@ var Rules = []Rule{
 	{"FL-R004", "webhook-backend", Error, "An admission webhook's Service does not exist, selects no pods, or fronts only workloads scaled to zero while the webhook fails closed."},
 	{"FL-A001", "assertion-failed", Error, "A repository-specific assertion from .fluxlint.yaml does not hold for a rendered object."},
 	{"FL-A002", "assertion-invalid", Error, "An assertion in .fluxlint.yaml does not compile or does not evaluate to a bool."},
+	{"FL-D001", "prune", Info, "Objects present at the base commit are gone, and their Kustomization prunes: Flux will delete them. Raised to a warning when namespaces, CRDs, PVCs, StatefulSets or Secrets are among them."},
+	{"FL-D002", "immutable-change", Error, "The change updates a field the API server treats as immutable (a workload selector, a StatefulSet's volumeClaimTemplates, a Job template, a RoleBinding's roleRef …). The apply is rejected unless the Kustomization sets force: true, which deletes and recreates the object."},
+	{"FL-D003", "ownership-move", Warning, "An object moves from one Flux Kustomization to another. If the old owner prunes and reconciles after the new owner has applied, the object is deleted and only comes back on the next reconcile."},
+	{"FL-D004", "orphaned", Info, "Objects leave Git but their Kustomization has prune: false, so they remain in the cluster with nothing managing them."},
 	{"FL-X001", "source-unavailable", Warning, "A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides."},
 	{"FL-X002", "floating-ref", Info, "A source follows a branch or semver range. What Flux applies can change without a commit to this repository, and fluxlint's result reflects whatever was fetched last."},
 	{"FL-X003", "render-gap", Info, "Part of a component's spec is not modelled, so what fluxlint analysed may differ from what the controller applies."},
@@ -142,12 +147,6 @@ func Run(t *model.Tree, cfg *config.Config) *Result {
 	r.admissionRules()
 	r.assertionRules()
 	timing := r.timingRules()
-	sort.SliceStable(r.findings, func(i, j int) bool {
-		a, b := r.findings[i], r.findings[j]
-		if a.Severity.rank() != b.Severity.rank() {
-			return a.Severity.rank() < b.Severity.rank()
-		}
-		return a.Rule < b.Rule
-	})
+	sortFindings(r.findings)
 	return &Result{Tree: t, Findings: r.findings, Timing: timing}
 }

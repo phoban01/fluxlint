@@ -21,7 +21,7 @@ func (s Summary) count(sev lint.Severity) int {
 	n := 0
 	for _, r := range s.Results {
 		for _, f := range r.Findings {
-			if f.Severity == sev {
+			if f.Severity == sev && !f.Existing {
 				n++
 			}
 		}
@@ -48,8 +48,13 @@ func Text(w io.Writer, s Summary, verbose bool) {
 			}
 		}
 		fmt.Fprintf(w, "%s: %d components (%d not rendered), %d objects\n", r.Tree.Entrypoint, len(r.Tree.Components), opaque, objects)
+		existing := 0
 		for _, f := range r.Findings {
-			if f.Severity == lint.Info && !verbose && f.Rule != "FL-T001" {
+			if f.Existing {
+				existing++
+				continue
+			}
+			if f.Severity == lint.Info && !verbose && f.Rule != "FL-T001" && !strings.HasPrefix(f.Rule, "FL-D") {
 				continue
 			}
 			where := f.Component
@@ -66,6 +71,9 @@ func Text(w io.Writer, s Summary, verbose bool) {
 			for _, d := range f.Detail {
 				fmt.Fprintf(w, "            %s\n", d)
 			}
+		}
+		if existing > 0 {
+			fmt.Fprintf(w, "  (%d finding(s) already present at the base commit are not shown)\n", existing)
 		}
 		fmt.Fprintln(w)
 	}

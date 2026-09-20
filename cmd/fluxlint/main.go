@@ -72,8 +72,8 @@ func printUsage(fs *flag.FlagSet) {
 }
 
 type checkOpts struct {
-	repo, cfgPath, format, failOn, cacheDir, output string
-	verbose, offline, refresh                       bool
+	repo, cfgPath, format, failOn, cacheDir, output, base string
+	verbose, offline, refresh                             bool
 }
 
 func newResolver(o *checkOpts, cfg *config.Config) (*source.Resolver, error) {
@@ -103,6 +103,7 @@ func checkFlags(o *checkOpts) *flag.FlagSet {
 	fs.StringVar(&o.cfgPath, "config", "", "config file (default <repo>/"+config.DefaultFile+")")
 	fs.StringVar(&o.format, "format", "text", "output format: text, json, gitlab (Code Quality), sarif or github (workflow annotations)")
 	fs.StringVar(&o.output, "output", "", "write the report to this file and print the text report to stdout")
+	fs.StringVar(&o.base, "base", "", "Git ref to compare with (e.g. origin/main): only new findings fail the run, and the transition itself is analysed")
 	fs.StringVar(&o.failOn, "fail-on", "error", "lowest severity that fails the run: error or warning")
 	fs.BoolVar(&o.verbose, "v", false, "also list suggestions (info)")
 	fs.BoolVar(&o.offline, "offline", false, "never use the network: external sources must already be cached")
@@ -141,6 +142,17 @@ func check(args []string) int {
 		return 2
 	}
 
+	baseDir := ""
+	if o.base != "" {
+		dir, cleanup, err := checkoutBase(o.repo, o.base)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 2
+		}
+		defer cleanup()
+		baseDir = dir
+	}
+
 	start := time.Now()
 	results := make([]*lint.Result, len(entrypoints))
 	errs := make([]error, len(entrypoints))
@@ -155,6 +167,19 @@ func check(args []string) int {
 				return
 			}
 			results[i] = lint.Run(tree, cfg)
+			if baseDir == "" {
+				return
+			}
+			// an entrypoint that does not exist at the base is simply new
+			if st, err := os.Stat(filepath.Join(baseDir, ep)); err != nil || !st.IsDir() {
+				return
+			}
+			baseTree, err := render.Tree(context.Background(), baseDir, ep, cfg, resolver)
+			if err != nil {
+				errs[i] = fmt.Errorf("%s at %s: %w", ep, o.base, err)
+				return
+			}
+			lint.Compare(lint.Run(baseTree, cfg), results[i], cfg)
 		}()
 	}
 	wg.Wait()
