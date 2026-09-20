@@ -3,6 +3,7 @@ package lint
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/phoban01/fluxlint/pkg/graph"
@@ -13,9 +14,15 @@ import (
 type Timing struct {
 	// Bound is the worst case for a bootstrap that succeeds: every health
 	// wait runs to its timeout and every dependent polls a full requeue period.
-	Bound        time.Duration   `json:"bound"`
-	CriticalPath []PathStep      `json:"criticalPath"`
-	Schedule     *graph.Schedule `json:"-"`
+	Bound time.Duration `json:"bound"`
+	// Expected is the makespan with observed mean durations in place of
+	// timeouts and half a requeue period per dependsOn hop; zero when no
+	// observations were supplied. ObservedComponents says how many of the
+	// components had one: the rest count as instantaneous.
+	Expected           time.Duration   `json:"expected,omitempty"`
+	ObservedComponents int             `json:"observedComponents,omitempty"`
+	CriticalPath       []PathStep      `json:"criticalPath"`
+	Schedule           *graph.Schedule `json:"-"`
 }
 
 type PathStep struct {
@@ -41,7 +48,38 @@ func (r *run) timingRules() *Timing {
 		t.CriticalPath = append(t.CriticalPath, PathStep{Event: e.To, At: s.Earliest[e.To], Added: e.Weight, Reason: e.Reason})
 		detail = append(detail, fmt.Sprintf("t<=%-8v %-45s +%-7v %s", s.Earliest[e.To], e.To, e.Weight, e.Reason))
 	}
-	r.report("FL-T001", nil, nil, fmt.Sprintf("worst-case bootstrap bound is %v", s.Makespan), detail...)
+	headline := fmt.Sprintf("worst-case bootstrap bound is %v", s.Makespan)
+	if obs := r.cfg.Timing.Observed; len(obs) > 0 {
+		eg := graph.New()
+		for _, n := range g.Nodes() {
+			for _, e := range g.Out(n) {
+				switch e.Reason {
+				case "apply and health timeout":
+					e.Weight = 0
+					if c := r.componentOfEvent(e.To); c != nil {
+						if d, ok := obs[c.Key()]; ok {
+							e.Weight = d
+						}
+					}
+				case "dependsOn":
+					e.Weight = r.cfg.Timing.DependencyRequeue.Duration / 2
+				}
+				eg.AddEdge(e)
+			}
+		}
+		if es, ok := eg.Solve(); ok {
+			t.Expected = es.Makespan
+			for _, c := range ix.Tree.Components {
+				if _, ok := obs[c.Key()]; ok {
+					t.ObservedComponents++
+				}
+			}
+			headline += fmt.Sprintf("; expected about %v from observed reconcile durations (%d of %d components observed)",
+				es.Makespan.Round(time.Second), t.ObservedComponents, len(ix.Tree.Components))
+			detail = append(detail, "expected path: "+pathSummary(es))
+		}
+	}
+	r.report("FL-T001", nil, nil, headline, detail...)
 
 	if max := r.cfg.Timing.MaxBootstrapBound.Duration; max > 0 && s.Makespan > max {
 		r.report("FL-T100", nil, nil, fmt.Sprintf("worst-case bootstrap bound %v exceeds the budget of %v", s.Makespan, max))
@@ -159,6 +197,16 @@ func (r *run) staleSubstitution() {
 			}
 		}
 	}
+}
+
+func pathSummary(s *graph.Schedule) string {
+	var parts []string
+	for _, e := range s.CriticalPath() {
+		if e.Weight > 0 && strings.HasPrefix(e.To, "ready(") {
+			parts = append(parts, fmt.Sprintf("%s %v", strings.TrimSuffix(strings.TrimPrefix(e.To, "ready("), ")"), e.Weight.Round(time.Second)))
+		}
+	}
+	return strings.Join(parts, " -> ")
 }
 
 func (r *run) componentOfEvent(ev string) *model.Component {

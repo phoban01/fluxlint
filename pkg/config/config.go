@@ -135,6 +135,9 @@ type Timing struct {
 	MaxBootstrapBound Duration `json:"maxBootstrapBound"`
 	// DependencyRequeue is the controllers' --requeue-dependency (default 30s).
 	DependencyRequeue Duration `json:"dependencyRequeue"`
+	// Observed are mean reconcile durations per component key, supplied with
+	// --observed. They turn the worst-case bound into an estimate as well.
+	Observed map[string]time.Duration `json:"-"`
 	// DominantShare is the fraction of the bound above which a single
 	// component is reported as dominant (default 0.4).
 	DominantShare float64 `json:"dominantShare"`

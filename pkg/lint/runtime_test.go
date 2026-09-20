@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/phoban01/fluxlint/pkg/config"
 	"github.com/phoban01/fluxlint/pkg/lint"
@@ -353,5 +354,45 @@ func TestStaleSubstitution(t *testing.T) {
 	r = analyseDir(t, build(owner+"---\n"+reader("  dependsOn:\n    - name: config\n")), nil)
 	if got := find(r, "FL-T010"); len(got) != 0 {
 		t.Fatalf("dependsOn makes the controller wait for the same revision:\n%s", messages(got))
+	}
+}
+
+func TestObservedDurations(t *testing.T) {
+	metrics := `# HELP gotk_reconcile_duration_seconds ...
+gotk_reconcile_duration_seconds_sum{kind="Kustomization",name="a",namespace="flux-system"} 80
+gotk_reconcile_duration_seconds_count{kind="Kustomization",name="a",namespace="flux-system"} 4
+gotk_reconcile_duration_seconds_sum{kind="Kustomization",name="b",exported_namespace="flux-system",namespace="monitoring"} 30
+gotk_reconcile_duration_seconds_count{kind="Kustomization",name="b",exported_namespace="flux-system",namespace="monitoring"} 3
+gotk_reconcile_duration_seconds_sum{kind="GitRepository",name="flux-system",namespace="flux-system"} 9
+gotk_reconcile_duration_seconds_count{kind="GitRepository",name="flux-system",namespace="flux-system"} 9
+`
+	obs, err := lint.ParseObserved(strings.NewReader(metrics))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs["flux-system/a"] != 20*time.Second || obs["flux-system/b"] != 10*time.Second || len(obs) != 2 {
+		t.Fatalf("means per Kustomization, sources ignored: %v", obs)
+	}
+	yamlObs, err := lint.ParseObserved(strings.NewReader("flux-system/a: 20s\nHelmRelease/x/y: 1m\n"))
+	if err != nil || yamlObs["HelmRelease/x/y"] != time.Minute {
+		t.Fatalf("yaml form: %v %v", yamlObs, err)
+	}
+	if _, err := lint.ParseObserved(strings.NewReader("nothing useful")); err == nil {
+		t.Error("garbage must be an error, not an empty result")
+	}
+
+	cfg := config.Default()
+	cfg.Timing.Observed = obs
+	tree, err := render.Tree(context.Background(), "testdata/timing", "clusters/prod", cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := lint.Run(tree, cfg)
+	// worst case stays 5m + 30s + 2m + 30s; expected is 20s + 15s + 10s + 15s
+	if r.Timing.Bound != 8*time.Minute || r.Timing.Expected != time.Minute || r.Timing.ObservedComponents != 2 {
+		t.Errorf("bound %v expected %v observed %d", r.Timing.Bound, r.Timing.Expected, r.Timing.ObservedComponents)
+	}
+	if msg := find(r, "FL-T001")[0].Message; !strings.Contains(msg, "expected about 1m0s") || !strings.Contains(msg, "2 of 4 components observed") {
+		t.Errorf("headline: %s", msg)
 	}
 }

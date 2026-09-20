@@ -75,8 +75,8 @@ func printUsage(fs *flag.FlagSet) {
 }
 
 type checkOpts struct {
-	repo, cfgPath, format, failOn, cacheDir, output, base string
-	verbose, offline, refresh                             bool
+	repo, cfgPath, format, failOn, cacheDir, output, base, observed string
+	verbose, offline, refresh                                       bool
 }
 
 func newResolver(o *checkOpts, cfg *config.Config) (*source.Resolver, error) {
@@ -107,6 +107,7 @@ func checkFlags(o *checkOpts) *flag.FlagSet {
 	fs.StringVar(&o.format, "format", "text", "output format: text, json, gitlab (Code Quality), sarif or github (workflow annotations)")
 	fs.StringVar(&o.output, "output", "", "write the report to this file and print the text report to stdout")
 	fs.StringVar(&o.base, "base", "", "Git ref to compare with (e.g. origin/main): only new findings fail the run, and the transition itself is analysed")
+	fs.StringVar(&o.observed, "observed", "", "file with observed reconcile durations (gotk_reconcile_duration_seconds metrics, or a YAML map of component to duration): adds an expected time to the worst-case bound")
 	fs.StringVar(&o.failOn, "fail-on", "error", "lowest severity that fails the run: error or warning")
 	fs.BoolVar(&o.verbose, "v", false, "also list suggestions (info)")
 	fs.BoolVar(&o.offline, "offline", false, "never use the network: external sources must already be cached")
@@ -143,6 +144,17 @@ func check(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
+	}
+	if o.observed != "" {
+		f, err := os.Open(o.observed)
+		if err == nil {
+			cfg.Timing.Observed, err = lint.ParseObserved(f)
+			f.Close()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: --observed %s: %v\n", o.observed, err)
+			return 2
+		}
 	}
 
 	baseDir := ""
