@@ -137,7 +137,7 @@ func check(args []string) int {
 	}
 	entrypoints := fs.Args()
 	if len(entrypoints) == 0 {
-		entrypoints = cfg.Entrypoints
+		entrypoints = cfg.Paths()
 	}
 	if len(entrypoints) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no entrypoints: pass them as arguments or list them in", config.DefaultFile)
@@ -182,6 +182,7 @@ func check(args []string) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			cfg := cfg.For(ep) // this cluster's Kubernetes version, externals and budget
 			tree, err := render.Tree(context.Background(), o.repo, ep, cfg, resolver, render.WithBuildCache(builds))
 			if err != nil {
 				errs[i] = fmt.Errorf("%s: %w", ep, err)
@@ -276,7 +277,7 @@ func graphCmd(args []string) int {
 	}
 	entrypoints := fs.Args()
 	if len(entrypoints) == 0 {
-		entrypoints = cfg.Entrypoints
+		entrypoints = cfg.Paths()
 	}
 	if len(entrypoints) != 1 {
 		fmt.Fprintln(os.Stderr, "error: graph draws one entrypoint at a time; name it")
@@ -287,6 +288,7 @@ func graphCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
 	}
+	cfg = cfg.For(entrypoints[0])
 	tree, err := render.Tree(context.Background(), o.repo, entrypoints[0], cfg, resolver)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

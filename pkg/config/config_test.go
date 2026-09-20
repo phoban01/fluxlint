@@ -83,3 +83,66 @@ func TestUnknownKeysAndBadValuesAreErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestPerEntrypointSettings(t *testing.T) {
+	c, err := load(t, `
+kubeVersion: "1.35.0"
+externals:
+  namespaces: [shared]
+timing:
+  maxBootstrapBound: 30m
+entrypoints:
+  - clusters/production
+  - path: clusters/staging
+    kubeVersion: "1.36.0"
+    repoSource: {name: staging-fleet}
+    externals:
+      namespaces: [sandbox]
+      secrets: [{namespace: flux-system, name: staging-only}]
+    timing:
+      maxBootstrapBound: 45m
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Paths(); len(got) != 2 || got[0] != "clusters/production" || got[1] != "clusters/staging" {
+		t.Fatalf("paths = %v", got)
+	}
+
+	prod := c.For("clusters/production")
+	if prod.KubeVersion != "1.35.0" || len(prod.Externals.Namespaces) != 1 || prod.Timing.MaxBootstrapBound.Duration != 30*time.Minute {
+		t.Errorf("production should have the top-level settings: %+v", prod)
+	}
+
+	staging := c.For("./clusters/staging/")
+	if staging.KubeVersion != "1.36.0" || staging.Timing.MaxBootstrapBound.Duration != 45*time.Minute {
+		t.Errorf("staging overrides: %q, %v", staging.KubeVersion, staging.Timing.MaxBootstrapBound.Duration)
+	}
+	if staging.RepoSource.Name != "staging-fleet" || staging.RepoSource.Kind != "GitRepository" || staging.RepoSource.Namespace != "flux-system" {
+		t.Errorf("a partial repoSource keeps the defaults: %+v", staging.RepoSource)
+	}
+	if got := staging.Externals.Namespaces; len(got) != 2 || got[0] != "shared" || got[1] != "sandbox" {
+		t.Errorf("externals are added to the shared ones: %v", got)
+	}
+	if len(staging.Externals.Secrets) != 1 || staging.Timing.DependencyRequeue.Duration != 30*time.Second {
+		t.Errorf("staging = %+v", staging)
+	}
+	// one cluster's settings must not leak into another's, or into the shared ones
+	if len(c.Externals.Namespaces) != 1 || len(c.For("clusters/production").Externals.Namespaces) != 1 {
+		t.Error("per-entrypoint externals leaked")
+	}
+	if other := c.For("clusters/unlisted"); other != c {
+		t.Error("an unlisted entrypoint gets the top-level settings")
+	}
+}
+
+func TestEntrypointErrors(t *testing.T) {
+	for name, content := range map[string]string{
+		"unknown key in an entry": "entrypoints:\n  - path: clusters/a\n    kubeVerson: \"1.35.0\"\n",
+		"entry without a path":    "entrypoints:\n  - kubeVersion: \"1.35.0\"\n",
+	} {
+		if _, err := load(t, content); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}

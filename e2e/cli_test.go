@@ -199,3 +199,18 @@ func TestCLIRuleSelection(t *testing.T) {
 		t.Errorf("exit %d: only the patch rule should run, as an error\n%.800s", exit, out)
 	}
 }
+
+// Settings under an entrypoint apply to that cluster only.
+func TestCLIPerEntrypointExternals(t *testing.T) {
+	p := internalPlatform(t)
+	env := []string{"NETRC=" + p.netrc}
+	write(t, p.dir, "apps/legacy.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: legacy}\n")
+	out, _, exit := cli(t, env, "check", "--repo", p.dir, "--cache-dir", cacheDir)
+	if exit != 1 || !strings.Contains(out, `namespace "legacy" is not created by any component`) {
+		t.Fatalf("exit %d: the namespace should be missing\n%.600s", exit, out)
+	}
+	edit(t, p.dir, ".fluxlint.yaml", "entrypoints:\n  - clusters/prod\n", "entrypoints:\n  - path: clusters/prod\n    externals:\n      namespaces: [legacy]\n")
+	if out, _, exit := cli(t, env, "check", "--repo", p.dir, "--cache-dir", cacheDir); exit != 0 {
+		t.Errorf("exit %d: this cluster declares the namespace\n%.600s", exit, out)
+	}
+}

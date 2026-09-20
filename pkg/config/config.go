@@ -21,7 +21,9 @@ const DefaultFile = ".fluxlint.yaml"
 type Config struct {
 	// Entrypoints are directories (relative to the repo root) that a cluster's
 	// bootstrap Kustomization points at, e.g. "clusters/production".
-	Entrypoints []string `json:"entrypoints"`
+	// An entry is a path, or an object with a path and settings for that
+	// cluster alone.
+	Entrypoints []Entrypoint `json:"entrypoints"`
 
 	// RepoSource names the GitRepository that represents this repository.
 	RepoSource SourceRef `json:"repoSource"`

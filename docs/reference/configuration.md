@@ -50,6 +50,34 @@ timing:
 The directories your bootstrap Kustomizations point at, relative to the repository
 root. Entrypoints on the command line replace this list.
 
+Clusters in one repository differ. They run different Kubernetes versions, and a
+namespace that exists out of band in one does not exist in another. An entry can be an
+object that carries settings for that cluster alone:
+
+```yaml
+kubeVersion: "1.35.0"
+externals:
+  namespaces: [shared]
+
+entrypoints:
+  - clusters/production
+  - path: clusters/staging
+    kubeVersion: "1.36.0"              # staging upgrades first
+    externals:
+      namespaces: [sandbox]            # added to the shared list
+    timing:
+      maxBootstrapBound: 45m
+```
+
+| Field | Effect |
+| --- | --- |
+| `kubeVersion`, `repoSource` | replace the top-level value |
+| `externals` | added to the top-level externals |
+| `timing` | each field that is set replaces the top-level one |
+
+`rules`, `assertions` and `sources` are shared by every entrypoint. A path given on the
+command line picks up the settings of the entry with the same path.
+
 ## kubeVersion
 
 The Kubernetes version charts are rendered for. Charts read it as
