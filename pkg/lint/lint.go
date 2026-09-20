@@ -68,6 +68,8 @@ var Rules = []Rule{
 	{"FL-R002", "unresolved-identity-reference", Error, "A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Pods are not created, or cannot pull their image."},
 	{"FL-R003", "positional-patch", Warning, "A JSON patch in a Flux Kustomization addresses a list element by index (env/3, containers/0/args/2). When the upstream manifest adds or reorders entries — typically on a version bump — the patch silently applies to a different element. Prefer a strategic-merge patch keyed by name."},
 	{"FL-R004", "webhook-backend", Error, "An admission webhook's Service does not exist, selects no pods, or fronts only workloads scaled to zero while the webhook fails closed."},
+	{"FL-A001", "assertion-failed", Error, "A repository-specific assertion from .fluxlint.yaml does not hold for a rendered object."},
+	{"FL-A002", "assertion-invalid", Error, "An assertion in .fluxlint.yaml does not compile or does not evaluate to a bool."},
 	{"FL-X001", "source-unavailable", Warning, "A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides."},
 	{"FL-X002", "floating-ref", Info, "A source follows a branch or semver range. What Flux applies can change without a commit to this repository, and fluxlint's result reflects whatever was fetched last."},
 	{"FL-X003", "render-gap", Info, "Part of a component's spec is not modelled, so what fluxlint analysed may differ from what the controller applies."},
@@ -138,6 +140,7 @@ func Run(t *model.Tree, cfg *config.Config) *Result {
 	r.substitutionRules()
 	r.runtimeRules()
 	r.admissionRules()
+	r.assertionRules()
 	timing := r.timingRules()
 	sort.SliceStable(r.findings, func(i, j int) bool {
 		a, b := r.findings[i], r.findings[j]

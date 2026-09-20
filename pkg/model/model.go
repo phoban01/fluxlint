@@ -144,6 +144,10 @@ type Component struct {
 	// rendered from, when that file is part of the repository under analysis.
 	Origins map[string]string
 
+	// Vars are the resolved post-build variables (substituteFrom merged with
+	// inline substitute), when the component has a postBuild.
+	Vars map[string]string
+
 	// VarUses are the variable lookups made while substituting (HasPostBuild),
 	// LiteralVars the ${...} texts left untouched (no postBuild).
 	VarUses     []VarUse

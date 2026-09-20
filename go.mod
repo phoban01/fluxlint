@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/fluxcd/pkg/envsubst v1.8.0
+	github.com/google/cel-go v0.29.2
 	github.com/google/go-containerregistry v0.22.1
 	helm.sh/helm/v3 v3.22.0
 	k8s.io/api v0.37.0
@@ -61,7 +62,6 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.27.1 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/google/cel-go v0.29.2 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gosuri/uitable v0.0.4 // indirect

@@ -41,6 +41,9 @@ type Config struct {
 	// Rules overrides severities: "error", "warning", "info" or "off".
 	Rules map[string]string `json:"rules"`
 
+	// Assertions are repository-specific invariants, see Assertion.
+	Assertions []Assertion `json:"assertions"`
+
 	Timing Timing `json:"timing"`
 }
 
@@ -58,6 +61,29 @@ type SourceOverride struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 	Path      string `json:"path"`
+}
+
+// Assertion is a CEL expression that must hold for every rendered object it
+// matches. In scope: object (the rendered object), vars (the owning
+// component's resolved post-build variables) and component (its key).
+type Assertion struct {
+	Name     string `json:"name"`
+	Match    Match  `json:"match"`
+	Expr     string `json:"expr"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"` // error (default), warning or info
+	// MustMatch fails the assertion when nothing matches, so that a rename
+	// cannot quietly disable it.
+	MustMatch bool `json:"mustMatch"`
+}
+
+// Match selects objects; every field is an optional glob.
+type Match struct {
+	Group     string `json:"group"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Component string `json:"component"`
 }
 
 type SourceRef struct {

@@ -604,3 +604,29 @@ func TestFindingsCarryRepositoryLocations(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Repository-specific invariants
+
+// A blue/green convention: the colour that serves traffic must not be the one
+// that is drained. The variables live on `apps`; the Deployments are rendered
+// two levels below it, from an external repository.
+func TestAssertionOverVariablesAndExternalObjects(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "clusters/production/cluster-vars.yaml", "\ndata:\n", "\ndata:\n  podinfo_live: \"green\"\n")
+	edit(t, dir, ".fluxlint.yaml", "entrypoints:\n", `assertions:
+  - name: live podinfo colour serves traffic
+    mustMatch: true
+    match: {kind: Deployment, namespace: podinfo, name: "podinfo-*"}
+    expr: '!object.metadata.name.endsWith("-" + vars.podinfo_live) || object.spec.replicas > 0'
+    message: the colour named by podinfo_live is scaled to zero
+entrypoints:
+`)
+	if p := check(t, dir).problems(); len(p) != 0 {
+		t.Fatalf("green is live with 3 replicas: %+v", p)
+	}
+	// the mistake: flip the pointer without scaling the other colour up
+	edit(t, dir, "clusters/production/cluster-vars.yaml", `podinfo_live: "green"`, `podinfo_live: "blue"`)
+	r := check(t, dir)
+	expectOnly(t, r, "FL-A001", "Deployment/podinfo/podinfo-blue", "scaled to zero")
+}

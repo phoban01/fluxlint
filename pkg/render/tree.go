@@ -369,6 +369,7 @@ func (r *renderer) substitute(c *model.Component) error {
 	for k, v := range c.Substitute { // inline values win
 		vars[k] = v
 	}
+	c.Vars = vars
 	objs, uses, err := substitute(c.Raw, vars)
 	if err != nil {
 		return err

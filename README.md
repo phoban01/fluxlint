@@ -161,6 +161,28 @@ dependencies of Git-hosted charts, and `Bucket` sources. Where a spec uses somet
 that is not modelled, fluxlint says so (`FL-X003`) instead of guessing, and components
 that cannot be rendered lower the confidence of rules that depend on them.
 
+## Your own invariants
+
+Conventions that only make sense in your repository — blue/green rules, naming,
+required labels — are CEL expressions in `.fluxlint.yaml`, evaluated for every rendered
+object they match. In scope: `object`, `component`, and `vars`: the resolved post-build
+variables that apply to the object (for a nested Kustomization, those of the ancestor
+that substituted its spec).
+
+```yaml
+assertions:
+  - name: live colour serves traffic
+    mustMatch: true                       # fail if a rename leaves this guarding nothing
+    match: {kind: Deployment, namespace: shop, name: "shop-*"}   # globs; all optional
+    expr: '!object.metadata.name.endsWith("-" + vars.shop_live) || object.spec.replicas > 0'
+    message: the colour named by shop_live is scaled to zero
+    severity: error                       # default
+```
+
+This works on objects rendered from charts and external repositories too. An
+expression that cannot be evaluated (a typo in a field name) is reported as a failure
+rather than silently passing.
+
 ## Runtime-installed CRDs
 
 Some CRDs exist only once a controller is running — cluster-api-operator installs a
