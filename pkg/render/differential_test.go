@@ -75,6 +75,8 @@ func normal(t *testing.T, v any) any {
 // what Flux itself would apply, object for object.
 func TestBuildMatchesKustomizeController(t *testing.T) {
 	testdata, _ := filepath.Abs(filepath.Join("..", "lint", "testdata"))
+	local, _ := filepath.Abs("testdata")
+	_ = local
 	platform, _ := filepath.Abs(filepath.Join("..", "..", "e2e", "testdata", "platform"))
 	cases := []struct {
 		name, root, dir string
@@ -95,6 +97,34 @@ namePrefix: team-
 images:
   - name: example.test/unused
     newTag: v2
+`},
+		// The way upstream operators are adapted: the operator's own kustomization
+		// sets namePrefix and images, and the Flux Kustomization patches by the
+		// ORIGINAL name, deletes an inline Secret, rewires env by index and adds a
+		// suffix and an image tag. Flux edits the file in place; fluxlint wraps it.
+		{"operator adapted by original name", filepath.Join(local, "operator"), "config/default", `
+nameSuffix: -green
+images:
+  - name: controller
+    newName: registry.example.test/operator
+    newTag: v1.2.3
+patches:
+  - target: {group: apps, version: v1, kind: Deployment, name: manager}
+    patch: |
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value: [{name: regcred}]
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/valueFrom/secretKeyRef/name
+        value: api-credentials
+  - target: {version: v1, kind: Secret, name: manager-credentials}
+    patch: |
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: manager-credentials
+        namespace: system
+      $patch: delete
 `},
 		{"plain directory with a kustomization", filepath.Join(testdata, "clean"), "apps", ``},
 		{"directory without kustomization", filepath.Join(testdata, "timing"), "a", ``},

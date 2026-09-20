@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manager
+  namespace: system
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: manager}}
+  template:
+    metadata: {labels: {app: manager}}
+    spec:
+      containers:
+        - name: manager
+          image: controller:latest
+          env:
+            - name: WATCH_NAMESPACE
+              value: ""
+            - name: SERVICE_TOKEN
+              valueFrom: {secretKeyRef: {name: manager-credentials, key: SERVICE_TOKEN}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: manager-credentials
+  namespace: system
+stringData: {SERVICE_TOKEN: placeholder}

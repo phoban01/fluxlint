@@ -119,7 +119,7 @@ entrypoints:
 # The GitRepository that represents this repository (default shown).
 repoSource: {kind: GitRepository, name: flux-system, namespace: flux-system}
 
-kubeVersion: "1.32.0"                   # what charts are rendered for
+kubeVersion: "1.35.0"                   # what charts are rendered for
 
 # Things that exist in the cluster but are not produced by anything in Git.
 externals:
@@ -150,7 +150,9 @@ package (including `substitute: disabled`).
 Kustomizations that read from **another `GitRepository` or an `OCIRepository`** are
 rendered too. The source is fetched once at the ref the manifests pin and kept in a
 cache (`~/.cache/fluxlint`, `--cache-dir`, or `sources.cacheDir`); later runs are
-offline and fast. Credentials are whatever `git` and your Docker config already have.
+offline and fast. Credentials are whatever you already have: `git` credential helpers
+for Git, your Docker config for OCI, and `$NETRC` / `~/.netrc` for HTTP Helm repositories
+(in GitLab CI: `machine gitlab.example.com login gitlab-ci-token password $CI_JOB_TOKEN`).
 
 | Flag | Behaviour |
 | --- | --- |
@@ -272,6 +274,15 @@ its Git repository and as an OCI chart. The baseline must be clean and analyse i
 a namespace created by the consumer's own child, a chart-installed CRD with no ordering,
 a `wait: true` parent that times out before its releases, a version bump to a tag that
 does not exist, values a chart's schema rejects, …) and asserts that fluxlint names it.
+
+`e2e/operators_test.go` covers what public upstreams cannot: an internal platform that is
+mocked end to end and needs no network — an API repository and a kubebuilder-style
+operator repository (Go modules, RBAC, a contract) served as Git over `file://`, CRDs as
+an OCI artifact in an in-process registry, a private Helm repository behind basic auth,
+and a cluster repository that adapts the operator the usual way (blue/green nested
+Kustomization, version / path / replicas from a shared ConfigMap, inline Secret deleted,
+env rewired by index onto a ClusterExternalSecret). Its centrepiece is the routine version
+bump after which an untouched positional patch rewires the wrong variables.
 
 ## Licence
 

@@ -784,3 +784,22 @@ func TestStaleSubstitutionOfSharedVariables(t *testing.T) {
 	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-T010", "flux-system/apps", "cluster-vars", "1h0m0s")
 }
+
+// Charts gate on the Kubernetes version; fluxlint renders for the version the
+// repository declares (the fixture pins 1.35).
+func TestKubeVersionReachesCharts(t *testing.T) {
+	dir := repo(t)
+	b, _ := os.ReadFile(filepath.Join(dir, ".fluxlint.yaml"))
+	if !strings.Contains(string(b), `kubeVersion: "1.35.0"`) {
+		t.Fatalf("the platform fixture must be analysed for Kubernetes 1.35:\n%s", b)
+	}
+	edit(t, dir, ".fluxlint.yaml", `kubeVersion: "1.35.0"`, `kubeVersion: "1.20.0"`)
+	r := check(t, dir, "--offline")
+	found := false
+	for _, f := range r.rule("FL-G008") {
+		found = found || (strings.Contains(f.text(), "HelmRelease/cert-manager/cert-manager") && strings.Contains(f.text(), "kubeVersion"))
+	}
+	if !found {
+		t.Errorf("cert-manager refuses Kubernetes 1.20, so the declared version must reach the chart: %+v", r.problems())
+	}
+}

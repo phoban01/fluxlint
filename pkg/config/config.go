@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultKubeVersion is used to render charts when kubeVersion is not set.
-const DefaultKubeVersion = "1.32.0"
+const DefaultKubeVersion = "1.35.0"
 
 // DefaultFile is looked up in the repository root.
 const DefaultFile = ".fluxlint.yaml"

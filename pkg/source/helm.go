@@ -216,12 +216,19 @@ func httpGet(ctx context.Context, url string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if login, password, ok := netrcCredentials(req.URL.Host); ok {
+		req.SetBasicAuth(login, password)
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("GET %s: %s (credentials for HTTP Helm repositories are read from $NETRC or ~/.netrc)", url, resp.Status)
+	default:
 		return fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
 	_, err = io.Copy(w, io.LimitReader(resp.Body, maxArtifactBytes))
