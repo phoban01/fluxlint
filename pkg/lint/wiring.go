@@ -204,6 +204,7 @@ func selectorMatches(sel any, labels map[string]string) bool {
 type workload struct {
 	Object   model.Object
 	Labels   map[string]string
+	Meta     any // pod template metadata
 	Spec     any
 	Replicas *int // nil when the kind has no replica count or it is unset
 }
@@ -222,7 +223,7 @@ func podTemplate(o model.Object) (workload, bool) {
 	if spec == nil {
 		return workload{}, false
 	}
-	w := workload{Object: o, Spec: spec, Labels: map[string]string{}}
+	w := workload{Object: o, Spec: spec, Meta: model.Get(tmpl, "metadata"), Labels: map[string]string{}}
 	if m, ok := model.Get(tmpl, "metadata", "labels").(map[string]any); ok {
 		for k, v := range m {
 			w.Labels[k] = fmt.Sprint(v)

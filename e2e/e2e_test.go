@@ -511,3 +511,44 @@ func TestFailClosedWebhookScaledToZero(t *testing.T) {
 	r := check(t, dir)
 	expectOnly(t, r, "FL-R004", "cert-manager-webhook", "scaled to 0")
 }
+
+// ---------------------------------------------------------------------------
+// Admission: objects the API server would reject, checked against the real
+// CRDs that the charts install.
+
+func TestCustomResourceRejectedByChartCRD(t *testing.T) {
+	dir := repo(t)
+	// cert-manager's ClusterIssuer schema: acme.server is required and
+	// privateKeySecretRef must be an object
+	edit(t, dir, "infrastructure/production/configs/cluster-issuer.yaml", "  selfSigned: {}\n", "  acme:\n    email: ops@example.test\n    privateKeySecretRef: not-an-object\n")
+	r := check(t, dir)
+	expectOnly(t, r, "FL-V001", "ClusterIssuer/selfsigned", "spec.acme")
+}
+
+func TestCustomResourceVersionNotServed(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "infrastructure/production/configs/require-team-label.yaml", "apiVersion: kyverno.io/v1\n", "apiVersion: kyverno.io/v9\n")
+	r := check(t, dir)
+	expectOnly(t, r, "FL-G006", "ClusterPolicy/require-team-label", "kyverno.io/v9")
+}
+
+// Every namespace in the fixture enforces the baseline Pod Security level.
+func TestPodSecurityViolation(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "apps/base/podinfo/green/podinfo.yaml", "  patches:\n", `  patches:
+    - target:
+        kind: Deployment
+        name: podinfo
+      patch: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: podinfo
+        spec:
+          template:
+            spec:
+              hostNetwork: true
+`)
+	r := check(t, dir)
+	expectOnly(t, r, "FL-V002", "Deployment/podinfo/podinfo-green", "baseline", "host namespaces")
+}

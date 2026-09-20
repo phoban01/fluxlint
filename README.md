@@ -13,6 +13,10 @@ cluster, in well under a second for a typical repository.
   pull secret nothing creates (ExternalSecrets, ClusterExternalSecret namespace
   selectors and cert-manager Certificates count as producers); fail-closed webhooks with
   no backends; JSON patches that address `env` or `args` by position.
+- **Will the API server accept it?** Custom resources validated against the CRDs your
+  charts and repositories actually install (served versions, schema after defaulting),
+  and pod templates evaluated against their namespace's Pod Security level with the API
+  server's own checks.
 - **How long can it take?** Max-plus critical-path analysis over `dependsOn`,
   `wait`, `timeout` and `retryInterval`: where the time goes, which dependencies are
   not justified by anything rendered, where a failed apply stalls for a full interval.

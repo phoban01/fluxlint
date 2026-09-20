@@ -59,6 +59,9 @@ var Rules = []Rule{
 	{"FL-S001", "undefined-variable", Error, "A ${var} has no definition in postBuild.substitute / substituteFrom and no default. Flux substitutes the empty string."},
 	{"FL-S002", "missing-substitute-source", Error, "postBuild.substituteFrom names a ConfigMap/Secret that nothing renders and that is not optional. Declare it under externals.substitutions if it is created out of band."},
 	{"FL-S004", "unexpanded-variable", Info, "${...} expressions appear in a Kustomization without postBuild, so they reach the cluster verbatim. Expected for shell snippets; a bug if Flux substitution was intended."},
+	{"FL-G006", "unserved-version", Error, "A custom resource uses an apiVersion that the CRD rendered for it does not serve. The apply fails with 'no matches for kind'."},
+	{"FL-V001", "schema-violation", Error, "A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Unknown fields are not reported: a structural schema prunes them."},
+	{"FL-V002", "pod-security", Error, "A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created."},
 	{"FL-R001", "unresolved-config-reference", Error, "A pod references a Secret or ConfigMap (or a key of one) that nothing creates: not a manifest, an ExternalSecret, a ClusterExternalSecret selecting the namespace, a cert-manager Certificate, nor externals.secrets. The pod stays in ContainerCreating / CreateContainerConfigError."},
 	{"FL-R002", "unresolved-identity-reference", Error, "A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Pods are not created, or cannot pull their image."},
 	{"FL-R003", "positional-patch", Warning, "A JSON patch in a Flux Kustomization addresses a list element by index (env/3, containers/0/args/2). When the upstream manifest adds or reorders entries — typically on a version bump — the patch silently applies to a different element. Prefer a strategic-merge patch keyed by name."},
@@ -130,6 +133,7 @@ func Run(t *model.Tree, cfg *config.Config) *Result {
 	r.graphRules()
 	r.substitutionRules()
 	r.runtimeRules()
+	r.admissionRules()
 	timing := r.timingRules()
 	sort.SliceStable(r.findings, func(i, j int) bool {
 		a, b := r.findings[i], r.findings[j]
