@@ -29,6 +29,6 @@ spec:
     name: flux-system
   path: ./apps
   wait: true
-  timeout: 2m
+  timeout: 6m
   dependsOn:
     - name: namespaces

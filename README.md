@@ -13,7 +13,7 @@ cluster, in well under a second for a typical repository.
   `wait`, `timeout` and `retryInterval`: where the time goes, which dependencies are
   not justified by anything rendered, where a failed apply stalls for a full interval.
 
-Status: **pre-alpha (M2a)**. See [docs/DESIGN.md](docs/DESIGN.md) for the model and
+Status: **pre-alpha (M2b)**. See [docs/DESIGN.md](docs/DESIGN.md) for the model and
 roadmap.
 
 ## Install
@@ -58,10 +58,12 @@ entrypoints:
 # The GitRepository that represents this repository (default shown).
 repoSource: {kind: GitRepository, name: flux-system, namespace: flux-system}
 
+kubeVersion: "1.32.0"                   # what charts are rendered for
+
 # Things that exist in the cluster but are not produced by anything in Git.
 externals:
   namespaces: [tenant-a]
-  crdGroups: [cert-manager.io]          # installed by a chart fluxlint cannot render yet
+  crdGroups: [example.internal]         # installed by something fluxlint cannot reach
   substitutions:
     - kind: ConfigMap
       name: cluster-info
@@ -103,9 +105,21 @@ sources:
     - {kind: GitRepository, name: my-operator, path: ../my-operator}
 ```
 
-Not yet: the contents of Helm charts, and `Bucket` sources. Components that cannot be
-rendered are reported as such; rules that depend on them lower their confidence
-instead of guessing.
+**HelmReleases** are rendered with the Helm SDK (`helm template --include-crds`, in
+process) using the release's real `values` and `valuesFrom`, its release name and
+target namespace, and the chart version the manifests pin — from HTTP(S) and OCI
+`HelmRepository`s, `OCIRepository` chart refs, and charts inside a `GitRepository`.
+Each release is a node in the graph with helm-controller's timeout and install
+retries, so CRDs that only a chart installs, `dependsOn` between releases, and a
+`wait: true` Kustomization that gives up before its releases do are all visible. A
+chart that cannot render with your values is an error (`FL-G008`).
+
+Set `kubeVersion` in `.fluxlint.yaml` to what your clusters run: charts gate on it.
+
+Not yet: `spec.postRenderers`, `valuesFrom.targetPath`, Helm hooks, chart
+dependencies of Git-hosted charts, and `Bucket` sources. Where a spec uses something
+that is not modelled, fluxlint says so (`FL-X003`) instead of guessing, and components
+that cannot be rendered lower the confidence of rules that depend on them.
 
 ## Licence
 

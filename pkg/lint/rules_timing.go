@@ -79,7 +79,7 @@ func (r *run) timingRules() *Timing {
 	}
 
 	for _, c := range ix.Tree.Components {
-		if !c.IsRoot && !c.HasRetryInterval && c.Interval >= retryCliff {
+		if !c.IsRoot && !c.IsHelmRelease() && !c.HasRetryInterval && c.Interval >= retryCliff {
 			r.report("FL-T007", c, nil, fmt.Sprintf("no retryInterval: a failed apply is not retried for %v (interval)", c.Interval))
 		}
 		// timeout inversion: a waiting parent gives up before a child is allowed to
@@ -128,7 +128,7 @@ func (r *run) blockedBy(c *model.Component) []string {
 		var deps []string
 		for _, x := range r.ix.Tree.Components {
 			for _, d := range x.DependsOn {
-				if d.Namespace+"/"+d.Name == p.Key() {
+				if x.DepKey(d) == p.Key() {
 					deps = append(deps, x.String())
 				}
 			}
@@ -145,12 +145,12 @@ func (r *run) dependencyReview(g *graph.Graph, s *graph.Schedule) {
 	dg := graph.New()
 	for _, c := range ix.Tree.Components {
 		for _, d := range c.DependsOn {
-			dg.AddEdge(graph.Edge{From: c.Key(), To: d.Namespace + "/" + d.Name})
+			dg.AddEdge(graph.Edge{From: c.Key(), To: c.DepKey(d)})
 		}
 	}
 	for _, c := range ix.Tree.Components {
 		for _, d := range c.DependsOn {
-			dep := ix.Tree.ByKey[d.Namespace+"/"+d.Name]
+			dep := ix.Tree.ByKey[c.DepKey(d)]
 			if dep == nil {
 				continue
 			}

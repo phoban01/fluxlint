@@ -39,10 +39,31 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 	for len(level) > 0 {
 		// 0. materialise external sources, concurrently
 		r.fetch(ctx, level)
-		// 1. kustomize build every component of this level
+		// 1. render every component of this level: charts concurrently,
+		// kustomize builds one at a time (see buildMu)
+		var helmWG sync.WaitGroup
+		for _, c := range level {
+			if c.Opaque != "" || !c.IsHelmRelease() {
+				continue
+			}
+			spec := r.helmSpecOf(c.Spec)
+			c.RenderNotes = spec.Notes
+			helmWG.Add(1)
+			go func() {
+				defer helmWG.Done()
+				raw, err := helmTemplate(c.SourceRoot, spec, cfg.KubeVersion)
+				if err != nil {
+					c.BuildErr, c.Opaque = err, "chart rendering failed"
+					return
+				}
+				c.Raw = raw
+			}()
+		}
 		for _, c := range level {
 			t.Components = append(t.Components, c)
-			if c.Opaque != "" {
+			// Kind first: a HelmRelease's other fields belong to its render
+			// goroutine until helmWG.Wait()
+			if c.IsHelmRelease() || c.Opaque != "" {
 				continue
 			}
 			base := repoRoot
@@ -67,6 +88,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 				}
 			}
 		}
+		helmWG.Wait()
 		// 2. make this level's ConfigMaps/Secrets visible to substituteFrom
 		for _, c := range level {
 			r.indexData(c.Raw)
@@ -83,10 +105,15 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 			}
 			r.indexData(c.Objects)
 			for _, o := range c.Objects {
-				if !o.IsFluxKustomization() {
+				var child *model.Component
+				switch {
+				case o.IsFluxKustomization():
+					child = r.newComponent(o, c)
+				case o.IsHelmRelease():
+					child = r.newHelmComponent(o, c)
+				default:
 					continue
 				}
-				child := r.newComponent(o, c)
 				if c.IsRoot && child.Key() == c.Key() {
 					continue // the bootstrap Kustomization is the root itself
 				}
@@ -125,14 +152,20 @@ func (r *renderer) fetch(ctx context.Context, level []*model.Component) {
 		src, ok := r.sources[c.Source.String()]
 		switch {
 		case !ok:
-			c.Opaque = "source " + c.Source.String() + " is not defined"
+			c.Opaque = model.OpaqueUndefinedSource // FL-G001 reports it
 		case r.resolver == nil:
-			c.Opaque = "external source " + c.Source.String()
+			c.Opaque = model.OpaqueNoResolver
 		default:
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				res, err := r.resolver.Resolve(ctx, src)
+				var res *source.Result
+				var err error
+				if c.IsHelmRelease() {
+					res, err = r.resolver.Chart(ctx, c.Spec, src)
+				} else {
+					res, err = r.resolver.Resolve(ctx, src)
+				}
 				if err != nil {
 					c.SourceErr = err
 					c.Opaque = "source " + c.Source.String() + " unavailable"
@@ -230,6 +263,53 @@ func (r *renderer) newComponent(o model.Object, parent *model.Component) *model.
 	return c
 }
 
+func (r *renderer) newHelmComponent(o model.Object, parent *model.Component) *model.Component {
+	c := &model.Component{
+		Kind:      model.KindHelmRelease,
+		Namespace: o.Namespace(),
+		Name:      o.Name(),
+		Parent:    parent,
+		Spec:      o,
+		External:  true, // a chart is always fetched
+		Prune:     true,
+		Wait:      !model.Bool(o, "spec", "install", "disableWait"),
+	}
+	at := model.Get(o, "spec", "chartRef")
+	if at == nil {
+		at = model.Get(o, "spec", "chart", "spec", "sourceRef")
+	}
+	c.Source = model.Ref{Kind: model.Str(at, "kind"), Name: model.Str(at, "name"), Namespace: model.Str(at, "namespace")}
+	if c.Source.Namespace == "" {
+		c.Source.Namespace = c.Namespace
+	}
+	for _, d := range model.List(o, "spec", "dependsOn") {
+		ref := model.Ref{Kind: model.KindHelmRelease, Name: model.Str(d, "name"), Namespace: model.Str(d, "namespace")}
+		if ref.Namespace == "" {
+			ref.Namespace = c.Namespace
+		}
+		c.DependsOn = append(c.DependsOn, ref)
+	}
+	c.Interval, _ = parseDuration(model.Str(o, "spec", "interval"))
+	if c.Timeout, c.HasTimeout = parseDuration(model.Str(o, "spec", "timeout")); !c.HasTimeout {
+		c.Timeout, c.HasTimeout = 5*time.Minute, true // helm-controller's default
+	}
+	switch n := model.Get(o, "spec", "install", "remediation", "retries").(type) {
+	case int:
+		c.Retries = n
+	case int64:
+		c.Retries = int(n)
+	case float64:
+		c.Retries = int(n)
+	}
+	if model.Bool(o, "spec", "install", "createNamespace") {
+		c.CreatesNamespace = c.Namespace
+		if tn := model.Str(o, "spec", "targetNamespace"); tn != "" {
+			c.CreatesNamespace = tn
+		}
+	}
+	return c
+}
+
 func parseDuration(s string) (time.Duration, bool) {
 	if s == "" {
 		return 0, false
@@ -241,7 +321,9 @@ func parseDuration(s string) (time.Duration, bool) {
 func (r *renderer) substitute(c *model.Component) error {
 	if !c.HasPostBuild {
 		c.Objects = c.Raw
-		c.LiteralVars = literalVars(c.Raw)
+		if !c.IsHelmRelease() { // chart output is full of shell and template text
+			c.LiteralVars = literalVars(c.Raw)
+		}
 		return nil
 	}
 	vars := map[string]string{}

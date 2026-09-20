@@ -11,6 +11,9 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// DefaultKubeVersion is used to render charts when kubeVersion is not set.
+const DefaultKubeVersion = "1.32.0"
+
 // DefaultFile is looked up in the repository root.
 const DefaultFile = ".fluxlint.yaml"
 
@@ -26,6 +29,12 @@ type Config struct {
 	// Externals declares things that exist in the cluster but are not produced
 	// by anything in Git.
 	Externals Externals `json:"externals"`
+
+	// KubeVersion is the Kubernetes version charts are rendered for
+	// (.Capabilities.KubeVersion and the chart's kubeVersion constraint).
+	// Set it to what your clusters run; the default only exists because
+	// Helm's own (v1.20) is rejected by most current charts.
+	KubeVersion string `json:"kubeVersion"`
 
 	Sources Sources `json:"sources"`
 
@@ -115,6 +124,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.RepoSource.Namespace == "" {
 		c.RepoSource.Namespace = "flux-system"
+	}
+	if c.KubeVersion == "" {
+		c.KubeVersion = DefaultKubeVersion
 	}
 	if c.Timing.DependencyRequeue.Duration == 0 {
 		c.Timing.DependencyRequeue.Duration = 30 * time.Second

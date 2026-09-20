@@ -12,21 +12,29 @@ func (r *run) graphRules() {
 	ix := r.ix
 
 	for _, c := range ix.Tree.Components {
-		if c.External && c.Opaque != "" && c.BuildErr == nil {
+		if c.External && c.Opaque != "" && c.BuildErr == nil &&
+			c.Opaque != model.OpaqueNoResolver && c.Opaque != model.OpaqueUndefinedSource {
 			msg := "not analysed: " + c.Opaque
 			if c.SourceErr != nil {
 				msg += ": " + c.SourceErr.Error()
 			}
 			r.report("FL-X001", c, nil, msg)
 		}
+		for _, note := range c.RenderNotes {
+			r.report("FL-X003", c, nil, note)
+		}
 		if c.FloatingRef != "" {
 			r.report("FL-X002", c, nil, fmt.Sprintf("source %s: %s (analysed %s)", c.Source, c.FloatingRef, c.SourceRevision))
 		}
-		if c.BuildErr != nil {
+		switch {
+		case c.BuildErr == nil:
+		case c.IsHelmRelease():
+			r.report("FL-G008", c, nil, fmt.Sprintf("chart %s cannot be rendered with this release's values: %v", c.SourceRevision, c.BuildErr))
+		default:
 			r.report("FL-G008", c, nil, fmt.Sprintf("cannot render path %q: %v", c.Path, c.BuildErr))
 		}
 		for _, d := range c.DependsOn {
-			if ix.Tree.ByKey[d.Namespace+"/"+d.Name] == nil {
+			if ix.Tree.ByKey[c.DepKey(d)] == nil {
 				r.report("FL-G001", c, nil, fmt.Sprintf("dependsOn %s/%s, which does not exist", d.Namespace, d.Name))
 			}
 		}

@@ -264,7 +264,8 @@ pkg/report              text, JSON, SARIF, GitLab Code Quality, GitHub annotatio
 | **M0** prototype (done, superseded by M1) | shell-out render, event graph, SCC, namespace/CRD/source imports, substitution, max-plus critical path, dependency review |
 | **M1** faithful core (done, except SARIF/annotation reporters and differential tests against kustomize-controller) | in-process kustomize, Flux post-processing, config + externals, `FL-G001–5/8`, `FL-S001/2/4`, `FL-T001/2/4–8/100`, text + JSON reports, synthetic fixtures |
 | **M2a** external sources (done) | `GitRepository` + `OCIRepository` resolution (source-controller ref precedence, semver ranges), content-addressed cache, `--offline`/`--refresh`, overrides, connect timeout + per-host circuit breaker, `FL-X001/2`; CRDs from external repos join the export index |
-| **M2b** Helm + schemas | Helm expansion (`helm template` via SDK, chart cache), CRDs from charts, `FL-V001`, `FL-G006` |
+| **M2b** Helm (done) | HelmRelease as a graph component (timeout × install retries, `dependsOn`, `createNamespace`), in-process `helm template` with real values / `valuesFrom`, charts from HTTP, OCI and Git sources, chart cache, `FL-X003` render gaps |
+| **M2c** schemas | CRD catalogue with served versions and schemas, `FL-V001`, `FL-G006` |
 | **M3** runtime wiring | `FL-R*`, Pod Security, webhook analysis, RBAC-as-imports |
 | **M4** timing | interval weights, slack, `FL-T*`, observed durations, budget gate, graph export |
 | **M5** transitions | `--base` diff analysis, incremental rendering |

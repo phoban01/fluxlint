@@ -82,6 +82,9 @@ func (o Object) IsFluxKustomization() bool {
 	return o.Group() == FluxKustomizeGroup && o.Kind() == "Kustomization"
 }
 
+// IsHelmRelease reports whether o is a Flux HelmRelease.
+func (o Object) IsHelmRelease() bool { return o.Group() == FluxHelmGroup && o.Kind() == "HelmRelease" }
+
 // IsSource reports whether o is a Flux source object.
 func (o Object) IsSource() bool { return o.Group() == FluxSourceGroup }
 
@@ -94,11 +97,17 @@ func (r Ref) String() string { return r.Kind + "/" + r.Namespace + "/" + r.Name 
 // synthetic root component (IsRoot) stands for the entrypoint directory applied
 // by the bootstrap Kustomization.
 type Component struct {
+	Kind            string // KindKustomization or KindHelmRelease
 	Namespace, Name string
-	IsRoot          bool
-	Parent          *Component
-	Children        []*Component
-	Spec            Object // the Kustomization object as applied by Parent (post substitution)
+
+	// HelmRelease only.
+	Retries          int      // install remediation retries
+	CreatesNamespace string   // install.createNamespace target: created if absent, not owned
+	RenderNotes      []string // parts of the spec the renderer does not model yet
+	IsRoot           bool
+	Parent           *Component
+	Children         []*Component
+	Spec             Object // the Kustomization object as applied by Parent (post substitution)
 
 	Path      string
 	Source    Ref
@@ -140,14 +149,43 @@ type Component struct {
 	MissingSubstituteFrom []SubstituteRef
 }
 
+// Opaque reasons that are not failures to fetch.
+const (
+	OpaqueNoResolver      = "source resolution is disabled"
+	OpaqueUndefinedSource = "its source object is not defined"
+)
+
 // SubstituteRef is one postBuild.substituteFrom entry.
 type SubstituteRef struct {
 	Kind, Name string
 	Optional   bool
 }
 
-// Key is "namespace/name".
-func (c *Component) Key() string { return c.Namespace + "/" + c.Name }
+// Component kinds. The zero value is a Flux Kustomization.
+const (
+	KindKustomization = ""
+	KindHelmRelease   = "HelmRelease"
+)
+
+// Key is "namespace/name" for Kustomizations and "HelmRelease/namespace/name"
+// for HelmReleases, which commonly share a name with the Kustomization that
+// applies them.
+func (c *Component) Key() string { return KeyFor(c.Kind, c.Namespace, c.Name) }
+
+// KeyFor builds a component key.
+func KeyFor(kind, namespace, name string) string {
+	if kind == KindHelmRelease {
+		return KindHelmRelease + "/" + namespace + "/" + name
+	}
+	return namespace + "/" + name
+}
+
+// DepKey is the key of something c dependsOn: dependencies are always of c's
+// own kind.
+func (c *Component) DepKey(ref Ref) string { return KeyFor(c.Kind, ref.Namespace, ref.Name) }
+
+// IsHelmRelease reports whether c is rendered by helm-controller.
+func (c *Component) IsHelmRelease() bool { return c.Kind == KindHelmRelease }
 
 func (c *Component) String() string {
 	if c.IsRoot {

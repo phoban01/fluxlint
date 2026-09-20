@@ -13,6 +13,11 @@ func readyOf(c *model.Component) string { return "ready(" + c.String() + ")" }
 
 // healthBound is the longest a component may legitimately take to become Ready.
 func healthBound(c *model.Component) time.Duration {
+	if c.IsHelmRelease() {
+		// helm-controller waits up to spec.timeout per attempt and retries
+		// the install spec.install.remediation.retries times
+		return c.Timeout * time.Duration(1+c.Retries)
+	}
 	if !c.BlocksOnHealth() {
 		return 0
 	}
@@ -36,7 +41,7 @@ func declaredGraph(ix *Index) *graph.Graph {
 			}
 		}
 		for _, d := range c.DependsOn {
-			if dep := ix.Tree.ByKey[d.Namespace+"/"+d.Name]; dep != nil {
+			if dep := ix.Tree.ByKey[c.DepKey(d)]; dep != nil {
 				g.AddEdge(graph.Edge{From: readyOf(dep), To: startOf(c), Weight: requeue, Reason: "dependsOn"})
 			}
 		}
@@ -53,23 +58,19 @@ func needEdge(n Need) graph.Edge {
 		// all-or-nothing per Kustomization
 		return graph.Edge{From: readyOf(n.Provider), To: startOf(n.Consumer), Reason: reason}
 	case NeedSource:
-		if n.Object.IsFluxKustomization() {
-			return graph.Edge{From: startOf(n.Provider), To: startOf(n.Consumer), Reason: reason}
+		if n.Consumer.IsHelmRelease() {
+			// the HelmRelease object applies without its source, but the
+			// release never becomes Ready
+			return graph.Edge{From: startOf(n.Provider), To: readyOf(n.Consumer), Reason: reason}
 		}
-		// a HelmRelease applies without its source but never becomes Ready
-		return graph.Edge{From: startOf(n.Provider), To: readyOf(n.Consumer), Reason: reason}
+		return graph.Edge{From: startOf(n.Provider), To: startOf(n.Consumer), Reason: reason}
 	default:
 		return graph.Edge{From: startOf(n.Provider), To: startOf(n.Consumer), Reason: reason}
 	}
 }
 
 // matters reports whether an unmet need can block convergence of the consumer.
-func (n Need) matters() bool {
-	if n.Kind == NeedSource && !n.Object.IsFluxKustomization() {
-		return n.Consumer.BlocksOnHealth()
-	}
-	return true
-}
+func (n Need) matters() bool { return true }
 
 // fullGraph adds the precedence implied by imports to the declared graph.
 func fullGraph(ix *Index) *graph.Graph {

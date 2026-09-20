@@ -88,6 +88,11 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 				ix.Sources[ref.String()] = c
 			}
 		}
+		// install.createNamespace creates the namespace if absent without
+		// owning it, so it is an export but never a dual-ownership conflict
+		if ns := c.CreatesNamespace; ns != "" {
+			ix.Namespaces[ns] = append(ix.Namespaces[ns], c)
+		}
 	}
 
 	extNS := map[string]bool{cfg.RepoSource.Namespace: true}
@@ -129,8 +134,14 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 			}
 			if ref, ok := sourceRefOf(o); ok && once("src|"+ref.String()) {
 				n := Need{Kind: NeedSource, What: ref.String(), Consumer: c, Object: o}
-				if child := t.ByKey[o.Namespace()+"/"+o.Name()]; o.IsFluxKustomization() && child != nil {
-					n.Consumer = child // the Kustomization object applies fine; the child is what needs the source
+				// the Kustomization / HelmRelease object itself applies fine; the
+				// component it creates is what needs the source
+				kind := model.KindKustomization
+				if o.IsHelmRelease() {
+					kind = model.KindHelmRelease
+				}
+				if child := t.ByKey[model.KeyFor(kind, o.Namespace(), o.Name())]; child != nil {
+					n.Consumer = child
 				}
 				if p, found := ix.Sources[ref.String()]; found {
 					ix.addNeed(n, []*model.Component{p})

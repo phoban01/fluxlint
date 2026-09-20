@@ -67,6 +67,8 @@ type Resolver struct {
 	// down records hosts that could not be reached, so that one dead registry
 	// costs a single connect timeout rather than one per artifact.
 	down map[string]error
+	// indexes memoises Helm repository index downloads for the run.
+	indexes map[string]*indexCall
 }
 
 // connectTimeout bounds how long an unreachable host can hold up a run.
@@ -106,7 +108,7 @@ func New(opts Options) (*Resolver, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 60 * time.Second
 	}
-	return &Resolver{opts: opts, once: map[string]*call{}, down: map[string]error{}}, nil
+	return &Resolver{opts: opts, once: map[string]*call{}, down: map[string]error{}, indexes: map[string]*indexCall{}}, nil
 }
 
 // Resolve makes the artifact of a Flux source object available locally.
