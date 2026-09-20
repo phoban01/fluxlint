@@ -61,7 +61,8 @@ func PushContract(ctx context.Context, image string, contract []byte) (string, e
 		return "", err
 	}
 	img = mutate.Annotations(img, map[string]string{
-		"org.opencontainers.image.title": "fluxlint-contract.yaml",
+		"org.opencontainers.image.title":   "fluxlint-contract.yaml",
+		"org.opencontainers.image.created": time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z"), // fixed width: compared as text
 	}).(v1.Image)
 	attached, ok := mutate.Subject(img, *subject).(v1.Image)
 	if !ok {
@@ -98,8 +99,11 @@ func FetchContract(ctx context.Context, image string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := len(manifest.Manifests) - 1; i >= 0; i-- {
-		d := manifest.Manifests[i]
+	// a registry lists referrers in no particular order, so the push time
+	// recorded on each artifact decides which is newest
+	var newest v1.Image
+	var newestAt string
+	for _, d := range manifest.Manifests {
 		if d.ArtifactType != ContractArtifactType {
 			continue
 		}
@@ -107,18 +111,27 @@ func FetchContract(ctx context.Context, image string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		layers, err := img.Layers()
-		if err != nil || len(layers) == 0 {
-			return nil, fmt.Errorf("contract artifact %s has no layer", d.Digest)
-		}
-		rc, err := layers[0].Uncompressed()
+		m, err := img.Manifest()
 		if err != nil {
 			return nil, err
 		}
-		defer rc.Close()
-		return io.ReadAll(io.LimitReader(rc, maxContractBytes))
+		if at := m.Annotations["org.opencontainers.image.created"]; newest == nil || at > newestAt {
+			newest, newestAt = img, at
+		}
 	}
-	return nil, nil
+	if newest == nil {
+		return nil, nil
+	}
+	layers, err := newest.Layers()
+	if err != nil || len(layers) == 0 {
+		return nil, fmt.Errorf("the contract artifact attached to %s has no layer", image)
+	}
+	rc, err := layers[0].Uncompressed()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(io.LimitReader(rc, maxContractBytes))
 }
 
 type contractCall struct {
