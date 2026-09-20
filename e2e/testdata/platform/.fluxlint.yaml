@@ -1,7 +1,6 @@
 kubeVersion: "1.31.0"
 entrypoints:
   - clusters/production
-  - clusters/staging
 externals:
   # cluster-api-operator installs CAPA's CRDs when it reconciles the
   # InfrastructureProvider: nothing in Git renders them, but anything using

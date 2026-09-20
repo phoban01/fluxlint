@@ -144,7 +144,7 @@ make test   # hermetic: synthetic fixtures, local git repos, in-process registry
 make e2e    # the built binary against e2e/testdata/platform
 ```
 
-`e2e/testdata/platform` is a two-cluster repository laid out the way platform teams
+`e2e/testdata/platform` is a single-cluster repository laid out the way platform teams
 usually do it — `clusters/<env>`, layered `infrastructure/` and `apps/`, a shared
 variables ConfigMap, blue/green nested Kustomizations — built from real pinned upstreams:
 cert-manager, kyverno, cluster-api-operator with the AWS provider, and podinfo both from

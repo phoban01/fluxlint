@@ -1,7 +1,7 @@
 //go:build e2e
 
-// Package e2e runs the fluxlint binary against a realistic platform
-// repository (testdata/platform) built from real, pinned upstream components:
+// Package e2e runs the fluxlint binary against a realistic single-cluster
+// platform repository (testdata/platform) built from real, pinned upstream components:
 // cert-manager, kyverno, cluster-api-operator with the AWS provider, and
 // podinfo both as blue/green Kustomizations from its Git repository and as an
 // OCI Helm chart.
@@ -206,10 +206,8 @@ func TestBaselineIsCleanAndFast(t *testing.T) {
 	if p := cold.problems(); len(p) != 0 || cold.ExitCode != 0 {
 		t.Fatalf("baseline must be clean (exit %d): %+v", cold.ExitCode, p)
 	}
-	for _, ep := range []string{"clusters/production", "clusters/staging"} {
-		if cold.Bound[ep] == 0 {
-			t.Errorf("%s: no timing result", ep)
-		}
+	if cold.Bound["clusters/production"] == 0 {
+		t.Error("no timing result")
 	}
 	t.Logf("cold: %v", cold.Elapsed)
 
@@ -256,10 +254,8 @@ spec:
   url: https://kyverno.github.io/kyverno/
 `
 	edit(t, dir, "infrastructure/base/controllers/kyverno.yaml", repoYAML, "")
-	for _, env := range []string{"production", "staging"} {
-		write(t, dir, "infrastructure/"+env+"/configs/kyverno-repo.yaml", repoYAML)
-		edit(t, dir, "infrastructure/"+env+"/configs/kustomization.yaml", "resources:\n", "resources:\n  - kyverno-repo.yaml\n")
-	}
+	write(t, dir, "infrastructure/production/configs/kyverno-repo.yaml", repoYAML)
+	edit(t, dir, "infrastructure/production/configs/kustomization.yaml", "resources:\n", "resources:\n  - kyverno-repo.yaml\n")
 	r := check(t, dir, "--offline")
 	if r.ExitCode != 1 {
 		t.Errorf("exit code = %d, want 1", r.ExitCode)
@@ -287,7 +283,7 @@ spec:
   prune: false
 `)
 	edit(t, dir, "apps/production/kustomization.yaml", "resources:\n", "resources:\n  - team-namespaces.yaml\n")
-	r := check(t, dir, "--offline", "clusters/production")
+	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-G002", "flux-system/apps", "flux-system/team-namespaces", "namespace team-a")
 }
 
@@ -296,7 +292,7 @@ spec:
 func TestMislabelledNamespace(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "apps/base/namespaces/namespaces.yaml", "  name: team-a\n", "  name: team-b\n")
-	r := check(t, dir, "--offline", "clusters/staging")
+	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-G004", `"team-a"`, "ServiceAccount/team-a/team-a")
 }
 
@@ -305,7 +301,7 @@ func TestMislabelledNamespace(t *testing.T) {
 func TestDuplicateObjectFailsTheBuild(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "apps/base/namespaces/namespaces.yaml", "  name: team-a\n", "  name: podinfo\n")
-	r := check(t, dir, "--offline", "clusters/staging")
+	r := check(t, dir, "--offline")
 	var failed bool
 	for _, f := range r.rule("FL-G008") {
 		failed = failed || (f.Component == "flux-system/namespaces" && strings.Contains(f.text(), "already registered id"))
@@ -318,7 +314,7 @@ func TestDuplicateObjectFailsTheBuild(t *testing.T) {
 func TestUndefinedSubstitutionVariable(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "clusters/production/cluster-vars.yaml", "  cluster_name: \"management\"\n", "")
-	r := check(t, dir, "--offline", "clusters/production")
+	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-S001", "${cluster_name}", "HelmRelease/podinfo-helm/podinfo")
 }
 
@@ -326,15 +322,16 @@ func TestDualOwnership(t *testing.T) {
 	dir := repo(t)
 	write(t, dir, "apps/production/podinfo-ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: podinfo\n")
 	edit(t, dir, "apps/production/kustomization.yaml", "resources:\n", "resources:\n  - podinfo-ns.yaml\n")
-	r := check(t, dir, "--offline", "clusters/production")
+	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-G003", "Namespace/podinfo", "flux-system/apps", "flux-system/namespaces")
 }
 
 // Custom resources whose CRDs only a chart installs, with the ordering removed.
 func TestCRDFromChartWithoutOrdering(t *testing.T) {
 	dir := repo(t)
-	edit(t, dir, "clusters/staging/infrastructure.yaml", "  dependsOn:\n    - name: infra-controllers\n", "")
-	r := check(t, dir, "--offline", "clusters/staging")
+	// the first such block belongs to infra-configs
+	edit(t, dir, "clusters/production/infrastructure.yaml", "  dependsOn:\n    - name: infra-controllers\n", "")
+	r := check(t, dir, "--offline")
 	for _, f := range r.problems() {
 		if f.Rule != "FL-T006" {
 			t.Errorf("unexpected %s: %s", f.Rule, f.text())
@@ -354,7 +351,7 @@ func TestCRDFromChartWithoutOrdering(t *testing.T) {
 func TestRuntimeInstalledCRDKeepsItsOrdering(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "clusters/production/apps.yaml", "    - name: infra-capi-providers\n", "")
-	r := check(t, dir, "--offline", "clusters/production")
+	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-T006", "infrastructure.cluster.x-k8s.io/AWSClusterTemplate", "flux-system/infra-capi-providers")
 }
 
@@ -363,21 +360,21 @@ func TestRuntimeInstalledCRDKeepsItsOrdering(t *testing.T) {
 func TestTimeoutInversion(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "clusters/production/infrastructure.yaml", "  timeout: 15m\n", "  timeout: 5m\n")
-	r := check(t, dir, "--offline", "clusters/production")
+	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-T008", "flux-system/infra-controllers", "HelmRelease/capi-operator-system/capi-operator", "10m30s")
 }
 
 func TestRetryCliff(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "apps/base/podinfo/green/podinfo.yaml", "  retryInterval: 1m\n", "")
-	r := check(t, dir, "--offline", "clusters/staging")
+	r := check(t, dir, "--offline")
 	expectOnly(t, r, "FL-T007", "podinfo/podinfo-green", "30m")
 }
 
 func TestBootstrapBudget(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, ".fluxlint.yaml", "entrypoints:\n", "timing:\n  maxBootstrapBound: 10m\nentrypoints:\n")
-	r := check(t, dir, "--offline", "clusters/staging")
+	r := check(t, dir, "--offline")
 	if r.ExitCode != 1 {
 		t.Errorf("exceeding the budget must fail the run, exit = %d", r.ExitCode)
 	}
@@ -390,7 +387,7 @@ func TestBlueGreenVersionBump(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "clusters/production/cluster-vars.yaml", `podinfo_blue_version: "6.14.1"`, `podinfo_blue_version: "6.14.0"`)
 	edit(t, dir, "clusters/production/cluster-vars.yaml", `podinfo_blue_scale: "0"`, `podinfo_blue_scale: "3"`)
-	r := check(t, dir, "clusters/production")
+	r := check(t, dir)
 	if p := r.problems(); len(p) != 0 {
 		t.Fatalf("a version bump to an existing tag must stay clean: %+v", p)
 	}
@@ -399,14 +396,14 @@ func TestBlueGreenVersionBump(t *testing.T) {
 func TestVersionBumpToTagThatDoesNotExist(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "clusters/production/cluster-vars.yaml", `podinfo_green_version: "6.15.0"`, `podinfo_green_version: "6.15.0-does-not-exist"`)
-	r := check(t, dir, "clusters/production")
+	r := check(t, dir)
 	expectOnly(t, r, "FL-X001", "podinfo/podinfo-green", "6.15.0-does-not-exist")
 }
 
 func TestChartVersionThatDoesNotExist(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "infrastructure/base/controllers/cert-manager.yaml", "version: v1.19.6", "version: v0.0.0-does-not-exist")
-	r := check(t, dir, "clusters/staging")
+	r := check(t, dir)
 	var unavailable bool
 	for _, f := range r.rule("FL-X001") {
 		unavailable = unavailable || strings.Contains(f.text(), "HelmRelease/cert-manager/cert-manager")
@@ -423,7 +420,7 @@ func TestChartVersionThatDoesNotExist(t *testing.T) {
 func TestChartRejectsValues(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "infrastructure/base/controllers/cert-manager.yaml", "    replicaCount: 2\n", "    replicaCount: 2\n    thisValueDoesNotExist: true\n")
-	r := check(t, dir, "--offline", "clusters/staging")
+	r := check(t, dir, "--offline")
 	// cert-manager ships a values.schema.json that forbids unknown keys
 	var rejected bool
 	for _, f := range r.rule("FL-G008") {
@@ -437,7 +434,7 @@ func TestChartRejectsValues(t *testing.T) {
 func TestFloatingBranchIsReported(t *testing.T) {
 	dir := repo(t)
 	edit(t, dir, "apps/base/podinfo/green/podinfo.yaml", "    tag: ${podinfo_green_version}\n", "    branch: master\n")
-	r := check(t, dir, "clusters/staging")
+	r := check(t, dir)
 	if p := r.problems(); len(p) != 0 {
 		t.Errorf("a branch ref is a suggestion, not a problem: %+v", p)
 	}
