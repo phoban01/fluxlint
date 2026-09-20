@@ -23,6 +23,7 @@ const usage = `fluxlint — static convergence and timing analysis for Flux repo
 
 Usage:
   fluxlint check   [flags] [entrypoint ...]   analyse the repository
+  fluxlint graph   [flags] [entrypoint]       print the dependency graph (dot or mermaid)
   fluxlint explain <rule>                      describe a rule
   fluxlint rules                               list all rules
 
@@ -48,6 +49,8 @@ func main() {
 	switch os.Args[1] {
 	case "check":
 		os.Exit(check(os.Args[2:]))
+	case "graph":
+		os.Exit(graphCmd(os.Args[2:]))
 	case "explain":
 		os.Exit(explain(os.Args[2:]))
 	case "rules":
@@ -227,6 +230,55 @@ func check(args []string) int {
 	}
 	if sum.Failed(lint.Severity(o.failOn)) {
 		return 1
+	}
+	return 0
+}
+
+// graphCmd prints the component graph: dependsOn solid, parent/child dotted,
+// imports dashed, the critical path bold and cycles red.
+func graphCmd(args []string) int {
+	o := &checkOpts{}
+	fs := checkFlags(o)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if o.format == "text" {
+		o.format = "dot"
+	}
+	if o.cfgPath == "" {
+		o.cfgPath = filepath.Join(o.repo, config.DefaultFile)
+	}
+	cfg, err := config.Load(o.cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	entrypoints := fs.Args()
+	if len(entrypoints) == 0 {
+		entrypoints = cfg.Entrypoints
+	}
+	if len(entrypoints) != 1 {
+		fmt.Fprintln(os.Stderr, "error: graph draws one entrypoint at a time; name it")
+		return 2
+	}
+	resolver, err := newResolver(o, cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	tree, err := render.Tree(context.Background(), o.repo, entrypoints[0], cfg, resolver)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	switch o.format {
+	case "dot":
+		lint.WriteDOT(os.Stdout, tree, cfg)
+	case "mermaid":
+		lint.WriteMermaid(os.Stdout, tree, cfg)
+	default:
+		fmt.Fprintf(os.Stderr, "error: graph formats are dot and mermaid, not %q\n", o.format)
+		return 2
 	}
 	return 0
 }
