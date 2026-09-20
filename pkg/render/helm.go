@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,9 +9,11 @@ import (
 
 	"github.com/phoban01/fluxlint/pkg/model"
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v3/pkg/strvals"
 	"sigs.k8s.io/yaml"
 )
 
@@ -41,14 +44,23 @@ func (r *renderer) helmSpecOf(hr model.Object) helmSpec {
 		if key == "" {
 			key = "values.yaml"
 		}
-		if model.Str(vf, "targetPath") != "" {
-			s.Notes = append(s.Notes, fmt.Sprintf("valuesFrom %s/%s uses targetPath, which is not modelled; that value is left at the chart default", kind, name))
-			continue
-		}
 		data, ok := r.data[kind+"/"+hr.Namespace()+"/"+name]
 		if !ok {
 			if !model.Bool(vf, "optional") {
 				s.Notes = append(s.Notes, fmt.Sprintf("valuesFrom %s/%s is not rendered by any component; its values are left at chart defaults", kind, name))
+			}
+			continue
+		}
+		if tp := model.Str(vf, "targetPath"); tp != "" {
+			v, ok := data[key]
+			if !ok {
+				if !model.Bool(vf, "optional") {
+					s.Notes = append(s.Notes, fmt.Sprintf("valuesFrom %s/%s has no key %s; %s is left at the chart default", kind, name, key, tp))
+				}
+				continue
+			}
+			if err := setPathValue(s.Values, tp, v); err != nil {
+				s.Notes = append(s.Notes, fmt.Sprintf("valuesFrom %s/%s: cannot set %s: %v", kind, name, tp, err))
 			}
 			continue
 		}
@@ -70,6 +82,19 @@ func (r *renderer) helmSpecOf(hr model.Object) helmSpec {
 	return s
 }
 
+// setPathValue is helm-controller's ReplacePathValue: the value is set with
+// --set semantics, or --set-string ones when it is wrapped in quotes.
+func setPathValue(values map[string]any, path, value string) error {
+	const single, double = "'", "\""
+	quoted := func(q string) bool {
+		return len(value) > 1 && strings.HasPrefix(value, q) && strings.HasSuffix(value, q)
+	}
+	if quoted(single) || quoted(double) {
+		return strvals.ParseIntoString(path+"="+value[1:len(value)-1], values)
+	}
+	return strvals.ParseInto(path+"="+strings.ReplaceAll(value, ",", "\\,"), values)
+}
+
 func mergeValues(base, override map[string]any) map[string]any {
 	out := make(map[string]any, len(base))
 	for k, v := range base {
@@ -87,12 +112,40 @@ func mergeValues(base, override map[string]any) map[string]any {
 	return out
 }
 
-// helmTemplate is `helm template --include-crds`, in process.
-func helmTemplate(chartPath string, s helmSpec, kubeVersion string) ([]model.Object, error) {
-	ch, err := loader.Load(chartPath)
-	if err != nil {
-		return nil, err
+// chartContract reads the contract a chart ships beside its Chart.yaml. A
+// chart's subcharts are part of the same release, so theirs are merged in.
+func chartContract(ch *chart.Chart) (*model.Contract, []string) {
+	var out *model.Contract
+	var notes []string
+	for _, f := range ch.Files {
+		if f.Name != ContractFile {
+			continue
+		}
+		var c model.Contract
+		if err := yaml.UnmarshalStrict(f.Data, &c); err != nil {
+			notes = append(notes, fmt.Sprintf("%s in chart %s is invalid and was ignored: %v", ContractFile, ch.Name(), err))
+			continue
+		}
+		out = &c
 	}
+	for _, dep := range ch.Dependencies() {
+		sub, n := chartContract(dep)
+		notes = append(notes, n...)
+		if sub == nil {
+			continue
+		}
+		if out == nil {
+			out = &model.Contract{}
+		}
+		out.Requires.CRDs = append(out.Requires.CRDs, sub.Requires.CRDs...)
+		out.Requires.Secrets = append(out.Requires.Secrets, sub.Requires.Secrets...)
+		out.Requires.ConfigMaps = append(out.Requires.ConfigMaps, sub.Requires.ConfigMaps...)
+	}
+	return out, notes
+}
+
+// helmTemplate is `helm template --include-crds`, in process.
+func helmTemplate(ch *chart.Chart, s helmSpec, kubeVersion string) ([]model.Object, error) {
 	cfg := &action.Configuration{Log: func(string, ...any) {}}
 	inst := action.NewInstall(cfg)
 	inst.DryRun, inst.ClientOnly, inst.Replace = true, true, true
@@ -193,4 +246,61 @@ var clusterScopedKinds = map[string]bool{
 // scope is unknown, and "Cluster…" is the near-universal naming convention.
 func clusterScoped(o model.Object) bool {
 	return clusterScopedKinds[o.Kind()] || strings.HasPrefix(o.Kind(), "Cluster")
+}
+
+// addDependencies does for a chart directory what source-controller does
+// before packaging a chart from Git: dependencies listed in Chart.yaml that
+// are not vendored under charts/ are loaded from their file:// path or fetched
+// from their repository. fetch resolves name@version in a repository URL to a
+// local chart.
+func addDependencies(ch *chart.Chart, dir string, fetch func(repoURL, name, version string) (string, error)) []string {
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() || ch.Metadata == nil {
+		return nil // a packaged chart carries its dependencies
+	}
+	present := map[string]bool{}
+	for _, d := range ch.Dependencies() {
+		present[d.Name()] = true
+	}
+	var notes []string
+	for _, dep := range ch.Metadata.Dependencies {
+		if present[dep.Name] {
+			continue
+		}
+		var path string
+		var err error
+		switch {
+		case strings.HasPrefix(dep.Repository, "file://"):
+			path = filepath.Join(dir, strings.TrimPrefix(dep.Repository, "file://"))
+		case dep.Repository == "" || strings.HasPrefix(dep.Repository, "@") || strings.HasPrefix(dep.Repository, "alias:"):
+			err = fmt.Errorf("repository %q is a local helm alias", dep.Repository)
+		default:
+			path, err = fetch(dep.Repository, dep.Name, dep.Version)
+		}
+		var sub *chart.Chart
+		if err == nil {
+			sub, err = loader.Load(path)
+		}
+		if err != nil {
+			notes = append(notes, fmt.Sprintf("chart dependency %s %s could not be loaded, so its objects are missing from the analysis: %v", dep.Name, dep.Version, err))
+			continue
+		}
+		notes = append(notes, addDependencies(sub, path, fetch)...)
+		ch.AddDependency(sub)
+	}
+	return notes
+}
+
+// fetchChart resolves name@version from a Helm repository URL, as a chart
+// dependency names it.
+func (r *renderer) fetchChart(ctx context.Context, namespace, repoURL, name, version string) (string, error) {
+	if r.resolver == nil {
+		return "", fmt.Errorf("no source resolver")
+	}
+	res, err := r.resolver.Chart(ctx,
+		model.Object{"spec": map[string]any{"chart": map[string]any{"spec": map[string]any{"chart": name, "version": version}}}},
+		model.Object{"kind": "HelmRepository", "metadata": map[string]any{"name": "dependency:" + repoURL, "namespace": namespace}, "spec": map[string]any{"url": repoURL}})
+	if err != nil {
+		return "", err
+	}
+	return res.Dir, nil
 }

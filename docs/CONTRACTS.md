@@ -10,7 +10,8 @@ tag you pin, written by the people who know:
 
 ```yaml
 # fluxlint-contract.yaml — next to the kustomization a Flux Kustomization renders,
-# or at the root of the repository
+# at the root of the repository, or beside Chart.yaml in a Helm chart (subcharts'
+# contracts are merged into the release's)
 requires:
   crds:
     - {group: example.io, kind: Widget, version: v1}     # version optional

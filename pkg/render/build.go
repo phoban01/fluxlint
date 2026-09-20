@@ -41,6 +41,9 @@ type overlay struct {
 	TargetNamespace string
 	NamePrefix      string
 	NameSuffix      string
+	// Ignored reports paths the source leaves out of its artifact (see
+	// ignoreFilter). It narrows the generated resource list; nil ignores nothing.
+	Ignored func(path string, isDir bool) bool
 }
 
 func (o overlay) empty() bool {
@@ -168,7 +171,7 @@ func writeWrapper(tmp, dir string, ov overlay) error {
 		}
 		resources = []string{r}
 	} else {
-		found, err := generateResources(dir)
+		found, err := generateResources(dir, ov.Ignored)
 		if err != nil {
 			return err
 		}
@@ -221,12 +224,18 @@ func writeWrapper(tmp, dir string, ov overlay) error {
 // it does in the cluster — except that a sub-directory with its own
 // kustomization is included as a directory and not descended into. Files that
 // source-controller leaves out of every artifact are skipped.
-func generateResources(dir string) ([]string, error) {
+func generateResources(dir string, ignored func(string, bool) bool) ([]string, error) {
 	rf := provider.NewDefaultDepProvider().GetResourceFactory()
 	var out []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) (walkErr error) {
 		if err != nil {
 			return err
+		}
+		if p != dir && ignored != nil && ignored(p, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			if p != dir && excludedDirs[d.Name()] {

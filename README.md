@@ -145,7 +145,10 @@ timing:
 In-process kustomize builds, Flux's generated `kustomization.yaml` for directories
 without one, Kustomization-level `patches`, `images`, `components`, `targetNamespace`,
 `namePrefix`/`nameSuffix`, and `postBuild` substitution using Flux's own `envsubst`
-package (including `substitute: disabled`).
+package (including `substitute: disabled`). The generated file list honours
+source-controller's default exclusions, `.sourceignore` files and the source's
+`spec.ignore`, so a `values.yaml` you keep out of the artifact is not mistaken for a
+broken manifest.
 
 Kustomizations that read from **another `GitRepository` or an `OCIRepository`** are
 rendered too. The source is fetched once at the ref the manifests pin and kept in a
@@ -185,8 +188,12 @@ Set `kubeVersion` in `.fluxlint.yaml` to what your clusters run: charts gate on 
 hooks are included: a pre-install Job is a real pod with real needs. Test and delete hooks
 are left out.
 
-Not yet: `valuesFrom.targetPath`, chart
-dependencies of Git-hosted charts, and `Bucket` sources. Where a spec uses something
+`valuesFrom` follows helm-controller, including `targetPath` with its `--set` /
+quoted `--set-string` semantics. Charts that live in a `GitRepository` get the
+dependencies in their `Chart.yaml` loaded (`file://`) or fetched (HTTP and OCI
+repositories), as source-controller does before packaging them.
+
+Not yet: `Bucket` sources. Where a spec uses something
 that is not modelled, fluxlint says so (`FL-X003`) instead of guessing, and components
 that cannot be rendered lower the confidence of rules that depend on them.
 

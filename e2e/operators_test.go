@@ -201,7 +201,9 @@ func privateCharts(t *testing.T) (url, netrc string) {
 	dir := t.TempDir()
 	src := t.TempDir()
 	write(t, src, "metrics-agent/Chart.yaml", "apiVersion: v2\nname: metrics-agent\nversion: 2.3.1\n")
-	write(t, src, "metrics-agent/values.yaml", "cluster: unset\n")
+	write(t, src, "metrics-agent/values.yaml", "cluster: unset\nsampleRate: \"\"\n")
+	// the agent reads this Secret through the API, so no manifest mentions it
+	write(t, src, "metrics-agent/fluxlint-contract.yaml", "requires:\n  secrets:\n    - {name: telemetry-token, keys: [token]}\n")
 	write(t, src, "metrics-agent/templates/deploy.yaml", `apiVersion: apps/v1
 kind: Deployment
 metadata: {name: {{ .Release.Name }}}
@@ -214,7 +216,7 @@ spec:
       containers:
         - name: agent
           image: example.test/telemetry:1
-          args: ["--cluster={{ required "cluster is required" .Values.cluster }}"]
+          args: ["--cluster={{ required "cluster is required" .Values.cluster }}", "--sample-rate={{ required "sampleRate is required" .Values.sampleRate }}"]
 `)
 	ch, err := loader.Load(filepath.Join(src, "metrics-agent"))
 	if err != nil {
@@ -337,7 +339,16 @@ spec:
 	}
 	write(t, dir, "secrets/ces.yaml",
 		ces("api-credentials", "api-credentials", "      - {secretKey: SERVICE_URL, remoteRef: {key: prod/bootstrap, property: endpoint}}\n      - {secretKey: SERVICE_TOKEN, remoteRef: {key: prod/bootstrap, property: key}}\n")+
-			ces("regcred", "regcred", "      - {secretKey: .dockerconfigjson, remoteRef: {key: prod/regcred}}\n"))
+			ces("regcred", "regcred", "      - {secretKey: .dockerconfigjson, remoteRef: {key: prod/regcred}}\n")+`---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: telemetry-token, namespace: telemetry}
+spec:
+  secretStoreRef: {kind: ClusterSecretStore, name: vault}
+  target: {name: telemetry-token}
+  data:
+    - {secretKey: token, remoteRef: {key: prod/telemetry, property: token}}
+`)
 
 	write(t, dir, "apps/operator-green.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -398,8 +409,15 @@ spec:
   interval: 30m
   chart:
     spec: {chart: metrics-agent, version: 2.3.1, sourceRef: {kind: HelmRepository, name: internal}}
+  valuesFrom:
+    - {kind: ConfigMap, name: telemetry-settings, valuesKey: sample_rate, targetPath: sampleRate}
   values:
     cluster: ${cluster_name}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: telemetry-settings, namespace: telemetry}
+data: {sample_rate: "0.25"}
 `, charts))
 	return platform{dir: dir, netrc: netrc}
 }
@@ -525,6 +543,36 @@ func TestOperatorContractOrdering(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the contract's CRD requirement is unordered: %+v", r.problems())
+	}
+}
+
+// A chart can ship a contract too: the agent reads its token through the API,
+// so only the contract knows the Secret matters.
+func TestChartContractSecretKeyRenamed(t *testing.T) {
+	p := internalPlatform(t)
+	edit(t, p.dir, "secrets/ces.yaml", "{secretKey: token, remoteRef: {key: prod/telemetry", "{secretKey: api-token, remoteRef: {key: prod/telemetry")
+	r := p.check(t)
+	found := false
+	for _, f := range r.rule("FL-C001") {
+		found = found || (f.Component == "HelmRelease/telemetry/metrics-agent" && strings.Contains(f.text(), `requires key "token" of Secret telemetry/telemetry-token`))
+	}
+	if !found {
+		t.Errorf("the chart's contract names a key nothing provides: %+v", r.problems())
+	}
+}
+
+// valuesFrom with targetPath feeds a single value into the chart; losing the
+// key leaves a required value empty and the install fails.
+func TestValuesFromTargetPathKeyRemoved(t *testing.T) {
+	p := internalPlatform(t)
+	edit(t, p.dir, "apps/telemetry.yaml", `data: {sample_rate: "0.25"}`, `data: {rate: "0.25"}`)
+	r := p.check(t)
+	failed := false
+	for _, f := range r.rule("FL-G008") {
+		failed = failed || strings.Contains(f.text(), "sampleRate is required")
+	}
+	if !failed {
+		t.Errorf("the chart cannot render without sampleRate: %+v", r.problems())
 	}
 }
 

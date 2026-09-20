@@ -16,6 +16,7 @@ import (
 
 	"github.com/phoban01/fluxlint/pkg/config"
 	"github.com/phoban01/fluxlint/pkg/model"
+	"helm.sh/helm/v3/pkg/chart/loader"
 )
 
 // Tree renders everything reachable from entrypoint (relative to repoRoot).
@@ -61,7 +62,17 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 			helmWG.Add(1)
 			go func() {
 				defer helmWG.Done()
-				raw, err := helmTemplate(c.SourceRoot, spec, cfg.KubeVersion)
+				ch, err := loader.Load(c.SourceRoot)
+				var raw []model.Object
+				if err == nil {
+					c.RenderNotes = append(c.RenderNotes, addDependencies(ch, c.SourceRoot, func(repoURL, name, version string) (string, error) {
+						return r.fetchChart(ctx, c.Namespace, repoURL, name, version)
+					})...)
+					var notes []string
+					c.Contract, notes = chartContract(ch)
+					c.RenderNotes = append(c.RenderNotes, notes...)
+					raw, err = helmTemplate(ch, spec, cfg.KubeVersion)
+				}
 				if err != nil {
 					c.BuildErr, c.Opaque = err, "chart rendering failed"
 					return
@@ -80,7 +91,11 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 			if c.External {
 				base = c.SourceRoot
 			}
-			raw, origins, err := build(filepath.Join(base, c.Path), overlayFromSpec(c.Spec))
+			ov := overlayFromSpec(c.Spec)
+			if !hasKustomization(filepath.Join(base, c.Path)) {
+				ov.Ignored = ignoreFilter(base, r.sources[c.Source.String()])
+			}
+			raw, origins, err := build(filepath.Join(base, c.Path), ov)
 			if err != nil {
 				c.BuildErr, c.Opaque = err, "build failed"
 				continue

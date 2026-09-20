@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/fluxcd/pkg/envsubst v1.8.0
 	github.com/fluxcd/pkg/kustomize v1.41.0
+	github.com/fluxcd/pkg/sourceignore v0.19.0
 	github.com/google/cel-go v0.29.2
 	github.com/google/go-containerregistry v0.22.1
 	golang.org/x/mod v0.41.0
@@ -48,7 +49,6 @@ require (
 	github.com/exponent-io/jsonpath v0.0.0-20210407135951-1de76d718b3f // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/fluxcd/pkg/apis/kustomize v1.21.0 // indirect
-	github.com/fluxcd/pkg/sourceignore v0.19.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-gorp/gorp/v3 v3.1.0 // indirect
