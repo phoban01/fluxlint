@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/phoban01/fluxlint/pkg/lint"
 	"github.com/phoban01/fluxlint/pkg/render"
 	"github.com/phoban01/fluxlint/pkg/report"
+	"github.com/phoban01/fluxlint/pkg/source"
 )
 
 const usage = `fluxlint — static convergence and timing analysis for Flux repositories
@@ -69,8 +71,29 @@ func printUsage(fs *flag.FlagSet) {
 }
 
 type checkOpts struct {
-	repo, cfgPath, format, failOn string
-	verbose                       bool
+	repo, cfgPath, format, failOn, cacheDir string
+	verbose, offline, refresh               bool
+}
+
+func newResolver(o *checkOpts, cfg *config.Config) (*source.Resolver, error) {
+	opts := source.Options{CacheDir: o.cacheDir}
+	if opts.CacheDir == "" && cfg.Sources.CacheDir != "" {
+		opts.CacheDir = filepath.Join(o.repo, cfg.Sources.CacheDir)
+	}
+	switch {
+	case o.offline && o.refresh:
+		return nil, fmt.Errorf("--offline and --refresh are mutually exclusive")
+	case o.offline:
+		opts.Mode = source.Offline
+	case o.refresh:
+		opts.Mode = source.Refresh
+	}
+	for _, ov := range cfg.Sources.Overrides {
+		opts.Overrides = append(opts.Overrides, source.Override{
+			Kind: ov.Kind, Namespace: ov.Namespace, Name: ov.Name, Path: filepath.Join(o.repo, ov.Path),
+		})
+	}
+	return source.New(opts)
 }
 
 func checkFlags(o *checkOpts) *flag.FlagSet {
@@ -80,6 +103,9 @@ func checkFlags(o *checkOpts) *flag.FlagSet {
 	fs.StringVar(&o.format, "format", "text", "output format: text or json")
 	fs.StringVar(&o.failOn, "fail-on", "error", "lowest severity that fails the run: error or warning")
 	fs.BoolVar(&o.verbose, "v", false, "also list suggestions (info)")
+	fs.BoolVar(&o.offline, "offline", false, "never use the network: external sources must already be cached")
+	fs.BoolVar(&o.refresh, "refresh", false, "re-resolve floating refs (branches, semver ranges) instead of using the cache")
+	fs.StringVar(&o.cacheDir, "cache-dir", "", "source cache (default: user cache directory, or sources.cacheDir)")
 	fs.Usage = func() { printUsage(fs) }
 	return fs
 }
@@ -107,6 +133,12 @@ func check(args []string) int {
 		return 2
 	}
 
+	resolver, err := newResolver(o, cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+
 	start := time.Now()
 	results := make([]*lint.Result, len(entrypoints))
 	errs := make([]error, len(entrypoints))
@@ -115,7 +147,7 @@ func check(args []string) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tree, err := render.Tree(o.repo, ep, cfg)
+			tree, err := render.Tree(context.Background(), o.repo, ep, cfg, resolver)
 			if err != nil {
 				errs[i] = fmt.Errorf("%s: %w", ep, err)
 				return

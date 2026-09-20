@@ -1,6 +1,7 @@
 package lint_test
 
 import (
+	"context"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,7 +19,7 @@ func analyse(t *testing.T, fixture string, cfg *config.Config) *lint.Result {
 	if cfg == nil {
 		cfg = config.Default()
 	}
-	tree, err := render.Tree(filepath.Join("testdata", fixture), "clusters/prod", cfg)
+	tree, err := render.Tree(context.Background(), filepath.Join("testdata", fixture), "clusters/prod", cfg, nil)
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}

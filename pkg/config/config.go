@@ -27,10 +27,28 @@ type Config struct {
 	// by anything in Git.
 	Externals Externals `json:"externals"`
 
+	Sources Sources `json:"sources"`
+
 	// Rules overrides severities: "error", "warning", "info" or "off".
 	Rules map[string]string `json:"rules"`
 
 	Timing Timing `json:"timing"`
+}
+
+// Sources configures how external Flux sources are materialised.
+type Sources struct {
+	// CacheDir defaults to the user cache directory.
+	CacheDir string `json:"cacheDir"`
+	// Overrides map a source object to a local directory (relative to the
+	// repository root), e.g. a sibling checkout in a CI job.
+	Overrides []SourceOverride `json:"overrides"`
+}
+
+type SourceOverride struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Path      string `json:"path"`
 }
 
 type SourceRef struct {

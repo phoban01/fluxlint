@@ -93,6 +93,14 @@ func build(dir string, ov overlay) ([]model.Object, error) {
 
 	buildMu.Lock()
 	defer buildMu.Unlock()
+	// kustomize prints deprecation notices straight to os.Stderr. They concern
+	// the authors of whatever is being rendered (often a third-party repository),
+	// not the convergence question, so keep them out of the report.
+	if devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
+		stderr := os.Stderr
+		os.Stderr = devnull
+		defer func() { os.Stderr = stderr; devnull.Close() }()
+	}
 	opts := krusty.MakeDefaultOptions()
 	opts.LoadRestrictions = types.LoadRestrictionsNone
 	rm, err := krusty.MakeKustomizer(opts).Run(filesys.MakeFsOnDisk(), target)

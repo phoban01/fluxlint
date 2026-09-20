@@ -13,7 +13,7 @@ cluster, in well under a second for a typical repository.
   `wait`, `timeout` and `retryInterval`: where the time goes, which dependencies are
   not justified by anything rendered, where a failed apply stalls for a full interval.
 
-Status: **pre-alpha (M1)**. See [docs/DESIGN.md](docs/DESIGN.md) for the model and
+Status: **pre-alpha (M2a)**. See [docs/DESIGN.md](docs/DESIGN.md) for the model and
 roadmap.
 
 ## Install
@@ -75,16 +75,37 @@ timing:
   dependencyRequeue: 30s                # controllers' --requeue-dependency
 ```
 
-## What M1 does and does not render
+## What is rendered
 
-Rendered: in-process kustomize builds, Flux's generated `kustomization.yaml` for
-directories without one, Kustomization-level `patches`, `images`, `components`,
-`targetNamespace`, `namePrefix`/`nameSuffix`, and `postBuild` substitution using
-Flux's own `envsubst` package (including `substitute: disabled`).
+In-process kustomize builds, Flux's generated `kustomization.yaml` for directories
+without one, Kustomization-level `patches`, `images`, `components`, `targetNamespace`,
+`namePrefix`/`nameSuffix`, and `postBuild` substitution using Flux's own `envsubst`
+package (including `substitute: disabled`).
 
-Not yet: Kustomizations whose `sourceRef` is another repository or OCI artifact, and
-the contents of Helm charts. Those components are reported as *not rendered*; rules
-that depend on them lower their confidence instead of guessing. That is milestone M2.
+Kustomizations that read from **another `GitRepository` or an `OCIRepository`** are
+rendered too. The source is fetched once at the ref the manifests pin and kept in a
+cache (`~/.cache/fluxlint`, `--cache-dir`, or `sources.cacheDir`); later runs are
+offline and fast. Credentials are whatever `git` and your Docker config already have.
+
+| Flag | Behaviour |
+| --- | --- |
+| *(default)* | use the cache, fetch what is missing |
+| `--offline` | never touch the network; a miss is reported as `FL-X001` |
+| `--refresh` | also re-resolve floating refs (branches, semver ranges, `latest`) |
+
+Floating refs are reported (`FL-X002`): what Flux applies can then change without a
+commit to your repository. In CI, where sibling repositories are already checked out,
+map a source to a directory instead of fetching it:
+
+```yaml
+sources:
+  overrides:
+    - {kind: GitRepository, name: my-operator, path: ../my-operator}
+```
+
+Not yet: the contents of Helm charts, and `Bucket` sources. Components that cannot be
+rendered are reported as such; rules that depend on them lower their confidence
+instead of guessing.
 
 ## Licence
 

@@ -59,6 +59,8 @@ var Rules = []Rule{
 	{"FL-S001", "undefined-variable", Error, "A ${var} has no definition in postBuild.substitute / substituteFrom and no default. Flux substitutes the empty string."},
 	{"FL-S002", "missing-substitute-source", Error, "postBuild.substituteFrom names a ConfigMap/Secret that nothing renders and that is not optional. Declare it under externals.substitutions if it is created out of band."},
 	{"FL-S004", "unexpanded-variable", Info, "${...} expressions appear in a Kustomization without postBuild, so they reach the cluster verbatim. Expected for shell snippets; a bug if Flux substitution was intended."},
+	{"FL-X001", "source-unavailable", Warning, "A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides."},
+	{"FL-X002", "floating-ref", Info, "A source follows a branch or semver range. What Flux applies can change without a commit to this repository, and fluxlint's result reflects whatever was fetched last."},
 	{"FL-T001", "critical-path", Info, "The chain of waits that determines the worst-case time for a bootstrap to converge. A bound, not a prediction."},
 	{"FL-T002", "dominant-delay", Info, "One component contributes a large share of the worst-case bound, usually a generous timeout underneath a wait: true parent."},
 	{"FL-T004", "unjustified-dependency", Info, "A dependsOn edge for which no import exists between the two subtrees. It may encode a runtime need fluxlint cannot see; if not, it only serialises reconciliation."},

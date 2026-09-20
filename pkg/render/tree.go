@@ -4,16 +4,22 @@
 package render
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"github.com/phoban01/fluxlint/pkg/source"
 
 	"github.com/phoban01/fluxlint/pkg/config"
 	"github.com/phoban01/fluxlint/pkg/model"
 )
 
 // Tree renders everything reachable from entrypoint (relative to repoRoot).
-func Tree(repoRoot, entrypoint string, cfg *config.Config) (*model.Tree, error) {
+// A nil resolver leaves components with external sources unrendered.
+func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, resolver *source.Resolver) (*model.Tree, error) {
 	repoRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -26,17 +32,24 @@ func Tree(repoRoot, entrypoint string, cfg *config.Config) (*model.Tree, error) 
 		Prune:     true,
 	}
 	t := &model.Tree{Entrypoint: entrypoint, Root: root, ByKey: map[string]*model.Component{}}
-	r := &renderer{repoRoot: repoRoot, cfg: cfg, tree: t, data: map[string]map[string]string{}}
+	r := &renderer{repoRoot: repoRoot, cfg: cfg, tree: t, resolver: resolver,
+		data: map[string]map[string]string{}, sources: map[string]model.Object{}}
 
 	level := []*model.Component{root}
 	for len(level) > 0 {
+		// 0. materialise external sources, concurrently
+		r.fetch(ctx, level)
 		// 1. kustomize build every component of this level
 		for _, c := range level {
 			t.Components = append(t.Components, c)
 			if c.Opaque != "" {
 				continue
 			}
-			raw, err := build(filepath.Join(repoRoot, c.Path), overlayFromSpec(c.Spec))
+			base := repoRoot
+			if c.External {
+				base = c.SourceRoot
+			}
+			raw, err := build(filepath.Join(base, c.Path), overlayFromSpec(c.Spec))
 			if err != nil {
 				c.BuildErr, c.Opaque = err, "build failed"
 				continue
@@ -95,14 +108,54 @@ type renderer struct {
 	repoRoot string
 	cfg      *config.Config
 	tree     *model.Tree
+	resolver *source.Resolver
 	// data is "Kind/namespace/name" -> key/values, for substituteFrom.
 	data map[string]map[string]string
+	// sources is Ref.String() -> rendered Flux source object.
+	sources map[string]model.Object
+}
+
+// fetch resolves the external source of every component in level.
+func (r *renderer) fetch(ctx context.Context, level []*model.Component) {
+	var wg sync.WaitGroup
+	for _, c := range level {
+		if !c.External {
+			continue
+		}
+		src, ok := r.sources[c.Source.String()]
+		switch {
+		case !ok:
+			c.Opaque = "source " + c.Source.String() + " is not defined"
+		case r.resolver == nil:
+			c.Opaque = "external source " + c.Source.String()
+		default:
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				res, err := r.resolver.Resolve(ctx, src)
+				if err != nil {
+					c.SourceErr = err
+					c.Opaque = "source " + c.Source.String() + " unavailable"
+					if errors.Is(err, source.ErrUnsupported) {
+						c.Opaque = "source kind " + c.Source.Kind + " is not supported yet"
+					}
+					return
+				}
+				c.SourceRoot, c.SourceRevision, c.FloatingRef = res.Dir, res.Revision, res.Floating
+			}()
+		}
+	}
+	wg.Wait()
 }
 
 func (r *renderer) indexData(objs []model.Object) {
 	for _, o := range objs {
 		if k := o.Kind(); (k == "ConfigMap" || k == "Secret") && o.Group() == "" {
 			r.data[k+"/"+o.Namespace()+"/"+o.Name()] = dataOf(o)
+		}
+		if o.IsSource() {
+			ref := model.Ref{Kind: o.Kind(), Namespace: o.Namespace(), Name: o.Name()}
+			r.sources[ref.String()] = o
 		}
 	}
 }
@@ -116,7 +169,7 @@ func (r *renderer) adoptBootstrap(root *model.Component) {
 			continue
 		}
 		c := r.newComponent(o, nil)
-		if c.Opaque == "" && filepath.Clean(c.Path) == filepath.Clean(root.Path) {
+		if !c.External && filepath.Clean(c.Path) == filepath.Clean(root.Path) {
 			c.IsRoot, c.Raw = true, root.Raw
 			*root = *c
 			return
@@ -173,9 +226,7 @@ func (r *renderer) newComponent(o model.Object, parent *model.Component) *model.
 			})
 		}
 	}
-	if !r.isRepoSource(c.Source) {
-		c.Opaque = "external source " + c.Source.String()
-	}
+	c.External = !r.isRepoSource(c.Source)
 	return c
 }
 

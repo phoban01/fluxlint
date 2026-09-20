@@ -114,6 +114,14 @@ type Component struct {
 	Substitute     map[string]string
 	SubstituteFrom []SubstituteRef
 
+	// External is set when the source is not the repository under analysis.
+	// SourceRoot is then where its artifact was materialised.
+	External       bool
+	SourceRoot     string
+	SourceRevision string
+	FloatingRef    string // why the source ref is not reproducible, if so
+	SourceErr      error
+
 	// Opaque is non-empty when the component could not be rendered; the value
 	// says why (external source, build error).
 	Opaque   string

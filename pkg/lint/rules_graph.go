@@ -12,6 +12,16 @@ func (r *run) graphRules() {
 	ix := r.ix
 
 	for _, c := range ix.Tree.Components {
+		if c.External && c.Opaque != "" && c.BuildErr == nil {
+			msg := "not analysed: " + c.Opaque
+			if c.SourceErr != nil {
+				msg += ": " + c.SourceErr.Error()
+			}
+			r.report("FL-X001", c, nil, msg)
+		}
+		if c.FloatingRef != "" {
+			r.report("FL-X002", c, nil, fmt.Sprintf("source %s: %s (analysed %s)", c.Source, c.FloatingRef, c.SourceRevision))
+		}
 		if c.BuildErr != nil {
 			r.report("FL-G008", c, nil, fmt.Sprintf("cannot render path %q: %v", c.Path, c.BuildErr))
 		}
