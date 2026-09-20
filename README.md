@@ -1,30 +1,34 @@
 # fluxlint
 
-Static convergence and timing analysis for [Flux](https://fluxcd.io) repositories.
+[![ci](https://github.com/phoban01/fluxlint/actions/workflows/ci.yml/badge.svg)](https://github.com/phoban01/fluxlint/actions/workflows/ci.yml)
+[![license](https://img.shields.io/github/license/phoban01/fluxlint.svg)](LICENSE)
 
-fluxlint renders a Flux repository the way kustomize-controller would, links every
-component's imports (namespaces, CRDs, sources, substitution variables) against what
-other components export, and analyses the resulting dependency graph — without a
-cluster, in well under a second for a typical repository.
+fluxlint is a static analyser for [Flux](https://fluxcd.io) repositories. It finds
+changes that would stop a cluster from reconciling, before they merge and without a
+cluster to test on.
 
-- **Will it converge?** Bootstrap deadlocks, missing namespaces and sources,
-  dual ownership, undefined substitution variables.
-- **Will it run?** Pods that reference a Secret, ConfigMap key, ServiceAccount or
-  pull secret nothing creates (ExternalSecrets, ClusterExternalSecret namespace
-  selectors and cert-manager Certificates count as producers); fail-closed webhooks with
-  no backends; JSON patches that address `env` or `args` by position.
-- **Will the API server accept it?** Custom resources validated against the CRDs your
-  charts and repositories actually install (served versions, schema after defaulting, the CRD author's CEL rules), built-in
-  objects decoded strictly into their Kubernetes types (misspelt fields, wrong types,
-  an unquoted `1.31` in a label),
-  and pod templates evaluated against their namespace's Pod Security level with the API
-  server's own checks.
-- **How long can it take?** Max-plus critical-path analysis over `dependsOn`,
-  `wait`, `timeout` and `retryInterval`: where the time goes, which dependencies are
-  not justified by anything rendered, where a failed apply stalls for a full interval.
+It builds every `Kustomization` and `HelmRelease` the way the Flux controllers do,
+works out what each one needs from the others, and checks the result. A typical
+repository takes about a second.
 
-Status: **pre-alpha (M3)**. See [docs/DESIGN.md](docs/DESIGN.md) for the model and
-roadmap.
+fluxlint is pre-alpha. Rule IDs and the configuration format may still change.
+
+## Features
+
+* builds Kustomizations with the kustomize SDK, including Flux's patches, generated
+  `kustomization.yaml` and `postBuild` substitution
+* renders HelmReleases with the Helm SDK, using your values and the pinned chart version
+* fetches the Git repositories, OCI artifacts and Helm charts your manifests point at,
+  and caches them
+* finds bootstrap deadlocks: orderings that can never converge from an empty cluster
+* finds missing namespaces, CRDs, sources and substitution variables
+* finds pods that reference a Secret, key, ConfigMap or ServiceAccount nothing creates
+* validates custom resources against the CRDs you install, and pods against Pod Security
+* reports what a change will prune, orphan or fail to update
+* computes the worst-case bootstrap time and shows which timeouts and `dependsOn`
+  entries cause it
+* checks your own rules, written in CEL
+* reports to the terminal, JSON, GitLab Code Quality, SARIF and GitHub annotations
 
 ## Install
 
@@ -32,63 +36,160 @@ roadmap.
 go install github.com/phoban01/fluxlint/cmd/fluxlint@latest
 ```
 
-## Use
+## Get started
 
-An *entrypoint* is the directory a cluster's bootstrap Kustomization points at — the
+Run `check` against the directory your bootstrap Kustomization points at. This is the
 `--path` you gave `flux bootstrap`.
 
 ```bash
-fluxlint check clusters/production clusters/staging
-fluxlint check -v                  # entrypoints from .fluxlint.yaml, include suggestions
-fluxlint check --format json            # also: gitlab, sarif, github
+fluxlint check clusters/production
+```
+
+fluxlint exits `0` when it finds no errors, `1` when it finds some, and `2` when it
+cannot run. Use `--fail-on warning` to be stricter.
+
+```bash
+fluxlint check -v                        # also list suggestions
+fluxlint check --base origin/main        # gate only on what the change introduces
+fluxlint check --format json             # or gitlab, sarif, github
 fluxlint graph --format mermaid clusters/production
-fluxlint rules
-fluxlint explain FL-G002
+fluxlint rules                           # list every rule
+fluxlint explain FL-G002                 # describe one rule
 ```
 
-Exit code `1` when there are errors (`--fail-on warning` to be stricter), `2` for usage
-or I/O problems.
+## Examples
+
+### A bootstrap deadlock
+
+`configs` waits for `controllers`. But `controllers` holds a HelmRelease whose
+HelmRepository lives in `configs`:
+
+```yaml
+# clusters/production/infrastructure.yaml
+kind: Kustomization
+metadata:
+  name: controllers
+spec:
+  path: ./controllers        # contains HelmRelease/podinfo
+  wait: true
+---
+kind: Kustomization
+metadata:
+  name: configs
+spec:
+  path: ./configs            # contains HelmRepository/podinfo
+  dependsOn:
+    - name: controllers
+```
+
+On a running cluster nobody notices, because the HelmRepository already exists. A new
+cluster never gets past it.
 
 ```
-clusters/production: 12 components (3 not rendered), 214 objects
-  error   FL-G002 bootstrap-deadlock  cannot converge from an empty cluster: cycle between flux-system/configs, flux-system/controllers
+  error   FL-G002 bootstrap-deadlock  HelmRelease/flux-system/podinfo: cannot converge from an empty cluster: cycle between HelmRelease/flux-system/podinfo, flux-system/configs, flux-system/controllers
+            at controllers/release.yaml:3
+            ready(HelmRelease/flux-system/podinfo) -> ready(flux-system/controllers)  (parent has wait: true)
             ready(flux-system/controllers) -> start(flux-system/configs)  (dependsOn)
-            start(flux-system/configs) -> ready(flux-system/controllers)  (source HelmRepository/flux-system/podinfo needed by HelmRelease/flux-system/podinfo)
-  warning FL-T007 retry-cliff  flux-system/apps: no retryInterval: a failed apply is not retried for 30m0s (interval)
-  info    FL-T001 critical-path  worst-case bootstrap bound is 12m30s
+            start(flux-system/configs) -> ready(HelmRelease/flux-system/podinfo)  (source HelmRepository/flux-system/podinfo needed by HelmRelease/flux-system/podinfo)
 ```
 
-## Merge requests: `--base`
+### A version bump that breaks a patch
+
+A Kustomization pulls an operator from its own repository and points two of its
+environment variables at a Secret, by position:
+
+```yaml
+patches:
+  - target: {kind: Deployment, name: manager}
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/valueFrom/secretKeyRef/name
+        value: api-credentials
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/valueFrom/secretKeyRef/name
+        value: api-credentials
+```
+
+Version `v1.1.0` of the operator adds a variable at index 1. Someone bumps the tag
+and leaves the patch alone. The patch still applies, but to the wrong variables:
+
+```
+  error   FL-R001 unresolved-config-reference  Deployment/operator-system/operator-manager-green: container manager env TELEMETRY_TOKEN needs key "token" of Secret operator-system/api-credentials, but ClusterExternalSecret/api-credentials only defines "SERVICE_TOKEN", "SERVICE_URL"
+  error   FL-R001 unresolved-config-reference  Deployment/operator-system/operator-manager-green: container manager env SERVICE_TOKEN references Secret operator-system/manager-api-credentials, which nothing creates
+  warning FL-R003 positional-patch  operator-system/operator-green: 2 patch path(s) address list elements by position; an upstream change to the list (typically a version bump) silently retargets them
+            Deployment/manager /spec/template/spec/containers/0/env/1/valueFrom/secretKeyRef/name  -> currently "TELEMETRY_TOKEN"
+            Deployment/manager /spec/template/spec/containers/0/env/2/valueFrom/secretKeyRef/name  -> currently "SERVICE_URL"
+  warning FL-R007 module-skew  operator-system/operator-green: is built against example.test/platform-api v1.1.0, but flux-system/platform-api installs its CRDs at v1.0.0: fields and versions the controller expects may not exist
+            bump flux-system/platform-api to at least v1.1.0, in a change that lands before this one
+```
+
+The last finding comes from the operator's `go.mod`: it was built against a newer API
+module than the CRDs pinned next to it.
+
+### Where the bootstrap time goes
+
+fluxlint treats `dependsOn`, `wait`, `timeout` and `retryInterval` as a scheduling
+problem and finds the longest path through it. With `-v` it also suggests what to cut:
+
+```
+  info    FL-T001 critical-path  worst-case bootstrap bound is 8m0s
+            t<=0s       start(flux-system/a)      +0s      created by parent
+            t<=5m0s     ready(flux-system/a)      +5m0s    apply and health timeout
+            t<=5m30s    start(flux-system/b)      +30s     dependsOn
+            t<=7m30s    ready(flux-system/b)      +2m0s    apply and health timeout
+            t<=8m0s     start(flux-system/c)      +30s     dependsOn
+  info    FL-T002 dominant-delay  flux-system/a: timeout of 5m0s is 62% of the worst-case bound (8m0s) and sits on the critical path
+            at clusters/prod/all.yaml:3
+  info    FL-T004 unjustified-dependency  flux-system/c: dependsOn flux-system/b, but nothing rendered in flux-system/c imports anything from flux-system/b
+            at clusters/prod/all.yaml:37
+            on the critical path: removing it lowers the worst-case bound by 30s
+  info    FL-T005 redundant-dependency  flux-system/c: dependsOn flux-system/a is already implied by another dependsOn path
+            at clusters/prod/all.yaml:37
+```
+
+The bound is what Flux allows, not what usually happens. Give fluxlint the reconcile
+durations your controllers report and it adds an expected time:
+
+```bash
+kubectl -n flux-system port-forward deploy/kustomize-controller 8080 &
+curl -s localhost:8080/metrics | grep gotk_reconcile_duration_seconds > observed.prom
+fluxlint check --observed observed.prom
+```
+
+Set `timing.maxBootstrapBound` to fail a change that pushes the bound past a budget.
+
+### Merge requests
 
 ```bash
 fluxlint check --base origin/main
 ```
 
-renders both commits (the base via `git archive`, never touching your working tree) and
+fluxlint renders both commits. It reads the base with `git archive`, so your working
+tree is not touched. Then it:
 
-- **fails only on findings the change introduces** — existing debt is counted but does
-  not block, so fluxlint can be made a required check on day one;
-- reports what reconciling the change will do to a cluster running the base:
-  objects Flux will **prune** (a warning when namespaces, CRDs, PVCs, StatefulSets or
-  Secrets are among them), objects **orphaned** because their Kustomization has
-  `prune: false`, updates to **immutable fields** that the API server will reject
-  (workload selectors, `volumeClaimTemplates`, Job templates, `roleRef` …) unless the
-  Kustomization sets `force: true`, and objects that **move between Kustomizations**.
+* fails only on findings the change introduces. Old findings are counted but do not
+  block, so you can make the check required on the first day.
+* lists objects Flux will prune, and warns when they include namespaces, CRDs, PVCs,
+  StatefulSets or Secrets
+* lists objects left behind because their Kustomization has `prune: false`
+* reports updates to immutable fields, such as a Deployment's selector, which the API
+  server will reject unless the Kustomization sets `force: true`
+* lists objects that move from one Kustomization to another
 
-This sees through charts and external repositories: a chart upgrade that changes a
-Deployment's selector is reported against the HelmRelease whose version you bumped.
+This works through charts too. If a chart upgrade changes a selector, the finding
+points at the HelmRelease whose version you bumped.
 
-## In CI
+### CI
 
-Findings carry the repository file and line of the manifest to fix. When the offending
-object lives inside a chart or an external repository, that is the HelmRelease or
-Kustomization which pulls it in.
+Each finding carries the file and line to fix. If the object comes from a chart or
+another repository, that is the HelmRelease or Kustomization that pulls it in.
 
 ```yaml
-# GitLab: inline in the merge request widget
+# GitLab: findings appear in the merge request widget
 fluxlint:
   script:
-    - fluxlint check --base origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME --format gitlab --output gl-code-quality-report.json
+    - fluxlint check --base origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+        --format gitlab --output gl-code-quality-report.json
   artifacts:
     when: always
     reports:
@@ -99,198 +200,109 @@ fluxlint:
 ```
 
 ```yaml
-# GitHub Actions: inline annotations, or SARIF for code scanning
+# GitHub Actions: annotations on the diff, or SARIF for code scanning
 - run: fluxlint check --format github
 - run: fluxlint check --format sarif --output fluxlint.sarif
 ```
 
-With `--output` the machine-readable report goes to the file and the readable one to the
-job log. Code Quality fingerprints ignore line numbers, so GitLab can tell new findings
-from existing ones.
+With `--output`, the report goes to the file and the readable text goes to the job log.
 
-## Configure
+### Your own rules
 
-`.fluxlint.yaml` in the repository root (all fields optional):
-
-```yaml
-entrypoints:
-  - clusters/production
-
-# The GitRepository that represents this repository (default shown).
-repoSource: {kind: GitRepository, name: flux-system, namespace: flux-system}
-
-kubeVersion: "1.35.0"                   # what charts are rendered for
-
-# Things that exist in the cluster but are not produced by anything in Git.
-externals:
-  namespaces: [tenant-a]
-  crdGroups: [example.internal]         # installed by something fluxlint cannot reach
-  secrets:                              # created out of band; keys optional but enforced if given
-    - {namespace: flux-system, name: api-credentials, keys: [token]}
-  substitutions:
-    - kind: ConfigMap
-      name: cluster-info
-      variables: [cluster_name, region]
-
-rules:
-  FL-T007: "off"                        # error | warning | info | off
-
-timing:
-  maxBootstrapBound: 30m                # fail when the worst-case bound regresses past this
-  dependencyRequeue: 30s                # controllers' --requeue-dependency
-```
-
-## What is rendered
-
-In-process kustomize builds, Flux's generated `kustomization.yaml` for directories
-without one, Kustomization-level `patches`, `images`, `components`, `targetNamespace`,
-`namePrefix`/`nameSuffix`, and `postBuild` substitution using Flux's own `envsubst`
-package (including `substitute: disabled`). The generated file list honours
-source-controller's default exclusions, `.sourceignore` files and the source's
-`spec.ignore`, so a `values.yaml` you keep out of the artifact is not mistaken for a
-broken manifest.
-
-Kustomizations that read from **another `GitRepository` or an `OCIRepository`** are
-rendered too. The source is fetched once at the ref the manifests pin and kept in a
-cache (`~/.cache/fluxlint`, `--cache-dir`, or `sources.cacheDir`); later runs are
-offline and fast. Credentials are whatever you already have: `git` credential helpers
-for Git, your Docker config for OCI, and `$NETRC` / `~/.netrc` for HTTP Helm repositories
-(in GitLab CI: `machine gitlab.example.com login gitlab-ci-token password $CI_JOB_TOKEN`).
-
-| Flag | Behaviour |
-| --- | --- |
-| *(default)* | use the cache, fetch what is missing |
-| `--offline` | never touch the network; a miss is reported as `FL-X001` |
-| `--refresh` | also re-resolve floating refs (branches, semver ranges, `latest`) |
-
-Floating refs are reported (`FL-X002`): what Flux applies can then change without a
-commit to your repository. In CI, where sibling repositories are already checked out,
-map a source to a directory instead of fetching it:
-
-```yaml
-sources:
-  overrides:
-    - {kind: GitRepository, name: my-operator, path: ../my-operator}
-```
-
-**HelmReleases** are rendered with the Helm SDK (`helm template --include-crds`, in
-process) using the release's real `values` and `valuesFrom`, its release name and
-target namespace, and the chart version the manifests pin — from HTTP(S) and OCI
-`HelmRepository`s, `OCIRepository` chart refs, and charts inside a `GitRepository`.
-Each release is a node in the graph with helm-controller's timeout and install
-retries, so CRDs that only a chart installs, `dependsOn` between releases, and a
-`wait: true` Kustomization that gives up before its releases do are all visible. A
-chart that cannot render with your values is an error (`FL-G008`).
-
-Set `kubeVersion` in `.fluxlint.yaml` to what your clusters run: charts gate on it.
-
-`spec.postRenderers` (kustomize patches and images) are applied, and install/upgrade
-hooks are included: a pre-install Job is a real pod with real needs. Test and delete hooks
-are left out.
-
-`valuesFrom` follows helm-controller, including `targetPath` with its `--set` /
-quoted `--set-string` semantics. Charts that live in a `GitRepository` get the
-dependencies in their `Chart.yaml` loaded (`file://`) or fetched (HTTP and OCI
-repositories), as source-controller does before packaging them.
-
-Not yet: `Bucket` sources. Where a spec uses something
-that is not modelled, fluxlint says so (`FL-X003`) instead of guessing, and components
-that cannot be rendered lower the confidence of rules that depend on them.
-
-## Your own invariants
-
-Conventions that only make sense in your repository — blue/green rules, naming,
-required labels — are CEL expressions in `.fluxlint.yaml`, evaluated for every rendered
-object they match. In scope: `object`, `component`, and `vars`: the resolved post-build
-variables that apply to the object (for a nested Kustomization, those of the ancestor
-that substituted its spec).
+Rules that only make sense in your repository are CEL expressions in `.fluxlint.yaml`.
+fluxlint evaluates them against every rendered object they match, including objects
+from charts and other repositories.
 
 ```yaml
 assertions:
   - name: live colour serves traffic
-    mustMatch: true                       # fail if a rename leaves this guarding nothing
-    match: {kind: Deployment, namespace: shop, name: "shop-*"}   # globs; all optional
+    match: {kind: Deployment, namespace: shop, name: "shop-*"}
     expr: '!object.metadata.name.endsWith("-" + vars.shop_live) || object.spec.replicas > 0'
     message: the colour named by shop_live is scaled to zero
-    severity: error                       # default
+    mustMatch: true        # fail if a rename leaves this rule matching nothing
 ```
 
-This works on objects rendered from charts and external repositories too. An
-expression that cannot be evaluated (a typo in a field name) is reported as a failure
-rather than silently passing.
+An expression sees `object`, `component` and `vars`, the post-build variables that
+apply to the object. An expression that cannot be evaluated is a failure, so a typo in
+a field name does not pass quietly.
 
-## What a controller needs
-
-Controllers rendered from another repository can ship a
-[contract](docs/CONTRACTS.md) — the CRDs they will not start without, the Secret keys
-they read — and fluxlint holds your repository to it (`FL-C001`). Without one it still
-compares the API module version in the controller's `go.mod` with the tag you pin for
-the component that installs those CRDs (`FL-R007`).
-
-## Timing with real numbers
-
-The timing analysis reports a worst-case bound. Give it observed reconcile durations and
-it also reports an expected time, with the path that determines it:
-
-```bash
-kubectl -n flux-system port-forward deploy/kustomize-controller 8080 &
-curl -s localhost:8080/metrics | grep gotk_reconcile_duration_seconds > observed.prom
-fluxlint check --observed observed.prom
-```
-
-A YAML map of component to duration (`flux-system/apps: 42s`) works too.
-
-## The graph
+### The graph
 
 ```bash
 fluxlint graph --format mermaid clusters/production   # or dot
 ```
 
-One node per Kustomization and HelmRelease; `dependsOn` solid, parent/child dotted,
-imports dashed and labelled, the critical path bold, deadlocks red.
+The graph has one node for each Kustomization and HelmRelease. `dependsOn` edges are
+solid, parent-to-child edges are dotted, and needs that fluxlint found are dashed and
+labelled. The critical path is bold. Deadlocks are red.
 
-## Runtime-installed CRDs
+## Configuration
 
-Some CRDs exist only once a controller is running — cluster-api-operator installs a
-provider's CRDs when it reconciles an `InfrastructureProvider`. Nothing in Git renders
-them, but their consumers must still be ordered after whatever triggers the install:
+fluxlint reads `.fluxlint.yaml` from the repository root. Every field is optional.
 
 ```yaml
+entrypoints:
+  - clusters/production
+
+kubeVersion: "1.35.0"                   # the version charts are rendered for
+
+# The GitRepository that stands for this repository. This is the default.
+repoSource: {kind: GitRepository, name: flux-system, namespace: flux-system}
+
+# Things that exist in the cluster but that nothing in Git creates.
 externals:
-  runtimeCRDs:
+  namespaces: [tenant-a]
+  crdGroups: [example.internal]
+  secrets:
+    - {namespace: flux-system, name: api-credentials, keys: [token]}
+  substitutions:
+    - kind: ConfigMap
+      name: cluster-info
+      variables: [cluster_name, region]
+  runtimeCRDs:                          # CRDs a controller installs once it runs
     - group: infrastructure.cluster.x-k8s.io
-      providedBy: flux-system/infra-capi-providers   # or HelmRelease/<ns>/<name>
+      providedBy: flux-system/infra-capi-providers
+
+rules:
+  FL-T007: "off"                        # error, warning, info or off
+
+timing:
+  maxBootstrapBound: 30m
+  dependencyRequeue: 30s                # the controllers' --requeue-dependency
 ```
 
-Unlike `crdGroups`, this keeps the ordering check: a consumer with no path from the
-provider is reported as `FL-T006`.
+Keep `externals` short. Everything listed there is something fluxlint takes on trust.
+
+`runtimeCRDs` is for CRDs that no manifest contains. cluster-api-operator, for
+example, installs a provider's CRDs when it reconciles an `InfrastructureProvider`.
+Unlike `crdGroups`, this entry keeps the ordering check: a consumer with no path from
+the provider is reported as `FL-T006`.
+
+## Guides
+
+* [What fluxlint renders](docs/RENDERING.md): sources, credentials, the cache, Helm,
+  and the limits
+* [Component contracts](docs/CONTRACTS.md): how a controller or chart declares the
+  CRDs and Secret keys it cannot start without
+* [Design](docs/DESIGN.md): the model, the rules and the roadmap
 
 ## Development
 
 ```bash
-make test   # hermetic: synthetic fixtures, local git repos, in-process registry and chart server
+make test   # unit tests; no network
 make e2e    # the built binary against e2e/testdata/platform
+make lint
 ```
 
-`e2e/testdata/platform` is a single-cluster repository laid out the way platform teams
-usually do it — `clusters/<env>`, layered `infrastructure/` and `apps/`, a shared
-variables ConfigMap, blue/green nested Kustomizations — built from real pinned upstreams:
-cert-manager, kyverno, cluster-api-operator with the AWS provider, and podinfo both from
-its Git repository and as an OCI chart. The baseline must be clean and analyse in under
-10s offline; every other test seeds one defect (a HelmRepository behind a `dependsOn`,
-a namespace created by the consumer's own child, a chart-installed CRD with no ordering,
-a `wait: true` parent that times out before its releases, a version bump to a tag that
-does not exist, values a chart's schema rejects, …) and asserts that fluxlint names it.
+The end-to-end suite runs the binary against a small platform repository built from
+pinned public upstreams: cert-manager, kyverno, cluster-api-operator with the AWS
+provider, and podinfo. The baseline must be clean. Every other test plants one defect
+and checks that fluxlint names it.
 
-`e2e/operators_test.go` covers what public upstreams cannot: an internal platform that is
-mocked end to end and needs no network — an API repository and a kubebuilder-style
-operator repository (Go modules, RBAC, a contract) served as Git over `file://`, CRDs as
-an OCI artifact in an in-process registry, a private Helm repository behind basic auth,
-and a cluster repository that adapts the operator the usual way (blue/green nested
-Kustomization, version / path / replicas from a shared ConfigMap, inline Secret deleted,
-env rewired by index onto a ClusterExternalSecret). Its centrepiece is the routine version
-bump after which an untouched positional patch rewires the wrong variables.
+`e2e/operators_test.go` does the same for a private platform, with no network. It
+serves an API repository and an operator repository over `file://`, CRDs from an
+in-process OCI registry, and a Helm repository behind basic auth.
 
 ## Licence
 
-Apache-2.0
+fluxlint is [Apache 2.0 licensed](LICENSE).
