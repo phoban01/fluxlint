@@ -1,0 +1,31 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: a
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./a
+  dependsOn:
+    - name: does-not-exist
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: b
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./b
+

@@ -1,0 +1,25 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./apps
+  postBuild:
+    substitute:
+      defined: from-inline
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-vars
+      - kind: ConfigMap
+        name: not-in-git
+      - kind: ConfigMap
+        name: maybe
+        optional: true

@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: out
+  namespace: default
+data:
+  a: "${defined}"
+  b: "${region}"
+  c: "${missing}"
+  d: "${fallback:-safe}"
