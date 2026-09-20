@@ -1,0 +1,11 @@
+# Every field of the format. Both this module and fluxlint itself parse this
+# file strictly in their tests, so the two definitions cannot drift apart.
+requires:
+  crds:
+    - {group: platform.example.test, kind: Widget, version: v1}
+    - {group: platform.example.test, kind: Gadget}
+  secrets:
+    - {name: api-credentials, keys: [SERVICE_URL, SERVICE_TOKEN]}
+    - {name: registry, namespace: shared, keys: [.dockerconfigjson]}
+  configMaps:
+    - {name: settings, keys: [region]}

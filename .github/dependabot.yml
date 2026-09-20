@@ -9,3 +9,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
+  - package-ecosystem: gomod
+    directory: /contract
+    schedule: {interval: monthly}
+    # the library keeps its minimum versions low so operators are not forced to upgrade
+    open-pull-requests-limit: 0
