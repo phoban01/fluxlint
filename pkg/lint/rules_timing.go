@@ -62,7 +62,7 @@ func (r *run) timingRules() *Timing {
 
 	// implicit ordering
 	for _, n := range ix.Needs {
-		if !n.matters() {
+		if !n.matters() || n.Kind == NeedRuntime { // a pod waiting for a Secret is not a failed apply
 			continue
 		}
 		e := needEdge(n)

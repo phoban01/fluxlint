@@ -442,3 +442,72 @@ func TestFloatingBranchIsReported(t *testing.T) {
 		t.Errorf("floating ref not reported: %+v", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Runtime wiring: things that apply cleanly and then never run.
+
+// The pattern used to adapt an upstream operator: a JSON patch that rewires an
+// env entry by position. fluxlint renders the external repository at the
+// pinned tag, so it can say what the index hits today.
+func TestPositionalPatchOnExternalRepository(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "apps/base/podinfo/green/podinfo.yaml", "  patches:\n", `  patches:
+    - target:
+        kind: Deployment
+        name: podinfo
+      patch: |
+        - op: replace
+          path: /spec/template/spec/containers/0/env/0/value
+          value: "#000000"
+`)
+	r := check(t, dir)
+	expectOnly(t, r, "FL-R003", "podinfo/podinfo-green", "env/0/value", `currently "PODINFO_UI_COLOR"`)
+}
+
+func TestSecretKeyThatDoesNotExist(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "apps/base/podinfo/green/podinfo.yaml", "  patches:\n", `  patches:
+    - target:
+        kind: Deployment
+        name: podinfo
+      patch: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: podinfo
+        spec:
+          template:
+            spec:
+              containers:
+                - name: podinfod
+                  env:
+                    - name: API_TOKEN
+                      valueFrom:
+                        secretKeyRef:
+                          name: podinfo-credentials
+                          key: token
+`)
+	t.Run("nothing creates the secret", func(t *testing.T) {
+		expectOnly(t, check(t, dir), "FL-R001", "Secret podinfo/podinfo-credentials", "which nothing creates")
+	})
+	t.Run("secret exists without the key", func(t *testing.T) {
+		write(t, dir, "apps/production/podinfo-credentials.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: podinfo-credentials\n  namespace: podinfo\nstringData:\n  password: x\n")
+		edit(t, dir, "apps/production/kustomization.yaml", "resources:\n", "resources:\n  - podinfo-credentials.yaml\n")
+		expectOnly(t, check(t, dir), "FL-R001", `needs key "token"`, `only defines "password"`)
+	})
+	t.Run("secret has the key", func(t *testing.T) {
+		edit(t, dir, "apps/production/podinfo-credentials.yaml", "  password: x\n", "  password: x\n  token: y\n")
+		if p := check(t, dir).problems(); len(p) != 0 {
+			t.Fatalf("resolved reference must be clean: %+v", p)
+		}
+	})
+}
+
+// cert-manager's webhook fails closed. Scaled to zero, every Certificate and
+// Issuer apply in the cluster is rejected.
+func TestFailClosedWebhookScaledToZero(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "infrastructure/base/controllers/cert-manager.yaml", "    replicaCount: 2\n", "    replicaCount: 2\n    webhook:\n      replicaCount: 0\n")
+	r := check(t, dir)
+	expectOnly(t, r, "FL-R004", "cert-manager-webhook", "scaled to 0")
+}

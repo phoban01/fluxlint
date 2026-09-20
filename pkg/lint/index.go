@@ -40,6 +40,10 @@ type Index struct {
 	MissingNamespaces []Need
 	MissingCRDs       []Need
 	MissingSources    []Need
+
+	// Wiring and Unresolved describe what pods reference at runtime.
+	Wiring     *wiring
+	Unresolved []unresolved
 }
 
 var builtinNamespaces = map[string]bool{
@@ -161,6 +165,7 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 			}
 		}
 	}
+	ix.linkRuntime()
 	return ix
 }
 

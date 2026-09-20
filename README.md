@@ -9,11 +9,15 @@ cluster, in well under a second for a typical repository.
 
 - **Will it converge?** Bootstrap deadlocks, missing namespaces and sources,
   dual ownership, undefined substitution variables.
+- **Will it run?** Pods that reference a Secret, ConfigMap key, ServiceAccount or
+  pull secret nothing creates (ExternalSecrets, ClusterExternalSecret namespace
+  selectors and cert-manager Certificates count as producers); fail-closed webhooks with
+  no backends; JSON patches that address `env` or `args` by position.
 - **How long can it take?** Max-plus critical-path analysis over `dependsOn`,
   `wait`, `timeout` and `retryInterval`: where the time goes, which dependencies are
   not justified by anything rendered, where a failed apply stalls for a full interval.
 
-Status: **pre-alpha (M2b)**. See [docs/DESIGN.md](docs/DESIGN.md) for the model and
+Status: **pre-alpha (M3)**. See [docs/DESIGN.md](docs/DESIGN.md) for the model and
 roadmap.
 
 ## Install
@@ -64,6 +68,8 @@ kubeVersion: "1.32.0"                   # what charts are rendered for
 externals:
   namespaces: [tenant-a]
   crdGroups: [example.internal]         # installed by something fluxlint cannot reach
+  secrets:                              # created out of band; keys optional but enforced if given
+    - {namespace: flux-system, name: api-credentials, keys: [token]}
   substitutions:
     - kind: ConfigMap
       name: cluster-info

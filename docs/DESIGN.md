@@ -266,7 +266,8 @@ pkg/report              text, JSON, SARIF, GitLab Code Quality, GitHub annotatio
 | **M2a** external sources (done) | `GitRepository` + `OCIRepository` resolution (source-controller ref precedence, semver ranges), content-addressed cache, `--offline`/`--refresh`, overrides, connect timeout + per-host circuit breaker, `FL-X001/2`; CRDs from external repos join the export index |
 | **M2b** Helm (done) | HelmRelease as a graph component (timeout × install retries, `dependsOn`, `createNamespace`), in-process `helm template` with real values / `valuesFrom`, charts from HTTP, OCI and Git sources, chart cache, `FL-X003` render gaps |
 | **M2c** schemas | CRD catalogue with served versions and schemas, `FL-V001`, `FL-G006` |
-| **M3** runtime wiring | `FL-R*`, Pod Security, webhook analysis, RBAC-as-imports |
+| **M3a** runtime wiring (done) | `FL-R001–4`: Secret/ConfigMap/key, ServiceAccount and pull-secret resolution with ExternalSecret, ClusterExternalSecret selector, Certificate and SealedSecret producers; runtime needs join the deadlock graph; positional patches resolved against the rendered target; webhook backends |
+| **M3b** runtime wiring | `FL-R*`, Pod Security, webhook analysis, RBAC-as-imports |
 | **M4** timing | interval weights, slack, `FL-T*`, observed durations, budget gate, graph export |
 | **M5** transitions | `--base` diff analysis, incremental rendering |
 | **M6** contracts + assertions | contract format, envtest recipe for operator authors, CEL assertions |

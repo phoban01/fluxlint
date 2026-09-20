@@ -57,6 +57,9 @@ func needEdge(n Need) graph.Edge {
 		// the CRD must be established, and server-side dry-run is
 		// all-or-nothing per Kustomization
 		return graph.Edge{From: readyOf(n.Provider), To: startOf(n.Consumer), Reason: reason}
+	case NeedRuntime:
+		// pods wait for their Secrets and ServiceAccounts; nothing fails
+		return graph.Edge{From: startOf(n.Provider), To: readyOf(n.Consumer), Reason: reason}
 	case NeedSource:
 		if n.Consumer.IsHelmRelease() {
 			// the HelmRelease object applies without its source, but the
@@ -70,7 +73,12 @@ func needEdge(n Need) graph.Edge {
 }
 
 // matters reports whether an unmet need can block convergence of the consumer.
-func (n Need) matters() bool { return true }
+func (n Need) matters() bool {
+	if n.Kind == NeedRuntime {
+		return n.Consumer.BlocksOnHealth() || n.Consumer.IsHelmRelease()
+	}
+	return true
+}
 
 // fullGraph adds the precedence implied by imports to the declared graph.
 func fullGraph(ix *Index) *graph.Graph {

@@ -74,11 +74,21 @@ type Externals struct {
 	// CRDGroups are API groups whose CRDs are installed out of band or by a
 	// component fluxlint cannot render yet.
 	CRDGroups []string `json:"crdGroups"`
+	// Secrets created out of band (bootstrap credentials, secrets written by
+	// a controller at runtime). Keys is optional; when given, key references
+	// are checked against it.
+	Secrets []ExternalSecretRef `json:"secrets"`
 	// RuntimeCRDs are API groups whose CRDs appear only once a component is
 	// running (an operator that installs providers, a controller that
 	// registers its own types). Unlike CRDGroups they keep their ordering:
 	// consumers must still come after ProvidedBy is Ready.
 	RuntimeCRDs []RuntimeCRD `json:"runtimeCRDs"`
+}
+
+type ExternalSecretRef struct {
+	Namespace string   `json:"namespace"`
+	Name      string   `json:"name"`
+	Keys      []string `json:"keys"`
 }
 
 type RuntimeCRD struct {
