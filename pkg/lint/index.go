@@ -166,6 +166,7 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 		}
 	}
 	ix.linkRuntime()
+	ix.linkControllers()
 	return ix
 }
 

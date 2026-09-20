@@ -274,7 +274,7 @@ pkg/report              text, JSON, SARIF, GitLab Code Quality, GitHub annotatio
 | **M4** timing | interval weights, slack, `FL-T*`, observed durations, budget gate, graph export |
 | **M5** transitions (done: `--base`, new-findings-only gating, `FL-D001–4` prune / immutable / ownership move / orphaned; incremental rendering still open) | `--base` diff analysis, incremental rendering |
 | **M6a** assertions (done) | CEL over rendered objects with inherited variable scope, `FL-A001/2`, `mustMatch` |
-| **M6b** contracts | contract format, envtest recipe for operator authors, CEL assertions |
+| **M6b** contracts (done: `fluxlint-contract.yaml` in external sources, `FL-C001`, `FL-R007` go.mod skew, RBAC as dependency justification; see CONTRACTS.md. Not yet: contracts inside Helm charts) | contract format, envtest recipe for operator authors, CEL assertions |
 | **1.0** | rule IDs frozen, Flux version support matrix, docs site |
 
 ## 8. Known limits

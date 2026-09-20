@@ -131,6 +131,12 @@ type Component struct {
 	FloatingRef    string // why the source ref is not reproducible, if so
 	SourceErr      error
 
+	// GoModule and GoRequires come from go.mod at the root of an external
+	// source; Contract from its fluxlint-contract.yaml.
+	GoModule   string
+	GoRequires map[string]string
+	Contract   *Contract
+
 	// Opaque is non-empty when the component could not be rendered; the value
 	// says why (external source, build error).
 	Opaque   string
@@ -239,4 +245,30 @@ type VarUse struct {
 	Object     Object
 	Defined    bool
 	HasDefault bool // ${var:-x} / ${var:=x}: safe even when undefined
+}
+
+// Contract is what a component declares it needs in order to run. It ships
+// with the component (fluxlint-contract.yaml at its tag), where the people who
+// know can keep it true — ideally proven by a test that starts the controller
+// with exactly these things present.
+type Contract struct {
+	Requires struct {
+		// CRDs the controller watches and cannot start without.
+		CRDs []ContractCRD `json:"crds"`
+		// Secrets and ConfigMaps read at runtime, in the component's namespace.
+		Secrets    []ContractConfig `json:"secrets"`
+		ConfigMaps []ContractConfig `json:"configMaps"`
+	} `json:"requires"`
+}
+
+type ContractCRD struct {
+	Group   string `json:"group"`
+	Kind    string `json:"kind"`
+	Version string `json:"version"` // optional: must be served
+}
+
+type ContractConfig struct {
+	Name      string   `json:"name"`
+	Namespace string   `json:"namespace"` // optional: defaults to where the component's workloads run
+	Keys      []string `json:"keys"`
 }

@@ -41,6 +41,7 @@ An *entrypoint* is the directory a cluster's bootstrap Kustomization points at �
 fluxlint check clusters/production clusters/staging
 fluxlint check -v                  # entrypoints from .fluxlint.yaml, include suggestions
 fluxlint check --format json            # also: gitlab, sarif, github
+fluxlint graph --format mermaid clusters/production
 fluxlint rules
 fluxlint explain FL-G002
 ```
@@ -208,6 +209,36 @@ assertions:
 This works on objects rendered from charts and external repositories too. An
 expression that cannot be evaluated (a typo in a field name) is reported as a failure
 rather than silently passing.
+
+## What a controller needs
+
+Controllers rendered from another repository can ship a
+[contract](docs/CONTRACTS.md) — the CRDs they will not start without, the Secret keys
+they read — and fluxlint holds your repository to it (`FL-C001`). Without one it still
+compares the API module version in the controller's `go.mod` with the tag you pin for
+the component that installs those CRDs (`FL-R007`).
+
+## Timing with real numbers
+
+The timing analysis reports a worst-case bound. Give it observed reconcile durations and
+it also reports an expected time, with the path that determines it:
+
+```bash
+kubectl -n flux-system port-forward deploy/kustomize-controller 8080 &
+curl -s localhost:8080/metrics | grep gotk_reconcile_duration_seconds > observed.prom
+fluxlint check --observed observed.prom
+```
+
+A YAML map of component to duration (`flux-system/apps: 42s`) works too.
+
+## The graph
+
+```bash
+fluxlint graph --format mermaid clusters/production   # or dot
+```
+
+One node per Kustomization and HelmRelease; `dependsOn` solid, parent/child dotted,
+imports dashed and labelled, the critical path bold, deadlocks red.
 
 ## Runtime-installed CRDs
 

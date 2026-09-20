@@ -197,6 +197,7 @@ func (r *renderer) fetch(ctx context.Context, level []*model.Component) {
 					return
 				}
 				c.SourceRoot, c.SourceRevision, c.FloatingRef = res.Dir, res.Revision, res.Floating
+				inspectSource(c)
 			}()
 		}
 	}

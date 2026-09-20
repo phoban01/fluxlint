@@ -74,6 +74,11 @@ func needEdge(n Need) graph.Edge {
 
 // matters reports whether an unmet need can block convergence of the consumer.
 func (n Need) matters() bool {
+	if n.Kind == NeedAPI {
+		// RBAC also names optional integrations: it may justify an ordering,
+		// never create a deadlock or demand one
+		return false
+	}
 	if n.Kind == NeedRuntime {
 		return n.Consumer.BlocksOnHealth() || n.Consumer.IsHelmRelease()
 	}

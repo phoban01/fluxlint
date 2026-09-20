@@ -76,6 +76,8 @@ var Rules = []Rule{
 	{"FL-D002", "immutable-change", Error, "The change updates a field the API server treats as immutable (a workload selector, a StatefulSet's volumeClaimTemplates, a Job template, a RoleBinding's roleRef …). The apply is rejected unless the Kustomization sets force: true, which deletes and recreates the object."},
 	{"FL-D003", "ownership-move", Warning, "An object moves from one Flux Kustomization to another. If the old owner prunes and reconciles after the new owner has applied, the object is deleted and only comes back on the next reconcile."},
 	{"FL-D004", "orphaned", Info, "Objects leave Git but their Kustomization has prune: false, so they remain in the cluster with nothing managing them."},
+	{"FL-R007", "module-skew", Warning, "A controller rendered from a Git source is built against a newer version of an API module than the tag pinned for the component that installs that module's CRDs. Read from go.mod in both sources."},
+	{"FL-C001", "contract-unmet", Error, "A component ships a fluxlint-contract.yaml declaring what it cannot run without — CRDs it watches, Secret and ConfigMap keys it reads — and this repository does not provide it, or provides it without ordering."},
 	{"FL-X001", "source-unavailable", Warning, "A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides."},
 	{"FL-X002", "floating-ref", Info, "A source follows a branch or semver range. What Flux applies can change without a commit to this repository, and fluxlint's result reflects whatever was fetched last."},
 	{"FL-X003", "render-gap", Info, "Part of a component's spec is not modelled, so what fluxlint analysed may differ from what the controller applies."},
@@ -147,6 +149,7 @@ func Run(t *model.Tree, cfg *config.Config) *Result {
 	r.substitutionRules()
 	r.runtimeRules()
 	r.admissionRules()
+	r.controllerRules()
 	r.assertionRules()
 	timing := r.timingRules()
 	sortFindings(r.findings)
