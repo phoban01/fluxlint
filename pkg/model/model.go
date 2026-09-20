@@ -140,6 +140,10 @@ type Component struct {
 	Raw     []Object
 	Objects []Object
 
+	// Origins maps an object ID to the repository-relative file it was
+	// rendered from, when that file is part of the repository under analysis.
+	Origins map[string]string
+
 	// VarUses are the variable lookups made while substituting (HasPostBuild),
 	// LiteralVars the ${...} texts left untouched (no postBuild).
 	VarUses     []VarUse
@@ -218,6 +222,7 @@ func (c *Component) Within(root *Component) bool {
 
 // Tree is everything rendered from one entrypoint.
 type Tree struct {
+	RepoRoot   string // absolute
 	Entrypoint string
 	Root       *Component
 	Components []*Component // stable order, root first

@@ -92,7 +92,16 @@ func (r *run) graphRules() {
 			comps[n[strings.Index(n, "(")+1:len(n)-1]] = true
 		}
 		sort.Strings(detail)
-		r.report("FL-G002", nil, nil,
+		// anchor the finding on a participant that is defined in the repository
+		var anchor *model.Component
+		for _, n := range scc {
+			if c := r.componentOfEvent(n); c != nil && anchor == nil {
+				if file, _ := r.locate(c, nil); file != "" {
+					anchor = c
+				}
+			}
+		}
+		r.report("FL-G002", anchor, nil,
 			"cannot converge from an empty cluster: cycle between "+strings.Join(sortedKeys(comps), ", "), detail...)
 	}
 }

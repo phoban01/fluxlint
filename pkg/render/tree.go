@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,9 +32,16 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 		Path:      entrypoint,
 		Prune:     true,
 	}
-	t := &model.Tree{Entrypoint: entrypoint, Root: root, ByKey: map[string]*model.Component{}}
+	t := &model.Tree{RepoRoot: repoRoot, Entrypoint: entrypoint, Root: root, ByKey: map[string]*model.Component{}}
 	r := &renderer{repoRoot: repoRoot, cfg: cfg, tree: t, resolver: resolver,
 		data: map[string]map[string]string{}, sources: map[string]model.Object{}}
+
+	// rawOrigins[c][i] is the file c.Raw[i] came from.
+	rawOrigins := map[*model.Component][]string{}
+	realRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return nil, err
+	}
 
 	level := []*model.Component{root}
 	for len(level) > 0 {
@@ -70,20 +78,23 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 			if c.External {
 				base = c.SourceRoot
 			}
-			raw, err := build(filepath.Join(base, c.Path), overlayFromSpec(c.Spec))
+			raw, origins, err := build(filepath.Join(base, c.Path), overlayFromSpec(c.Spec))
 			if err != nil {
 				c.BuildErr, c.Opaque = err, "build failed"
 				continue
 			}
 			c.Raw = raw
+			if !c.External {
+				rawOrigins[c] = origins
+			}
 			if c.IsRoot {
 				r.adoptBootstrap(c)
 				// the bootstrap Kustomization may itself carry patches/images
 				if ov := overlayFromSpec(c.Spec); !ov.empty() {
-					if raw, err := build(filepath.Join(repoRoot, c.Path), ov); err != nil {
+					if raw, origins, err := build(filepath.Join(repoRoot, c.Path), ov); err != nil {
 						c.BuildErr, c.Opaque = err, "build failed"
 					} else {
-						c.Raw = raw
+						c.Raw, rawOrigins[c] = raw, origins
 					}
 				}
 			}
@@ -104,6 +115,15 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 				continue
 			}
 			r.indexData(c.Objects)
+			// substitution preserves order, so origins still line up
+			if origins := rawOrigins[c]; len(origins) == len(c.Objects) {
+				c.Origins = map[string]string{}
+				for i, o := range c.Objects {
+					if rel, err := filepath.Rel(realRoot, origins[i]); err == nil && origins[i] != "" && !strings.HasPrefix(rel, "..") {
+						c.Origins[o.ID()] = filepath.ToSlash(rel)
+					}
+				}
+			}
 			for _, o := range c.Objects {
 				var child *model.Component
 				switch {

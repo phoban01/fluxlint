@@ -66,29 +66,30 @@ func overlayFromSpec(spec model.Object) overlay {
 
 // build renders dir the way kustomize-controller would: a kustomization.yaml is
 // generated when the directory has none, and the Flux-level overlay is applied.
-func build(dir string, ov overlay) ([]model.Object, error) {
+//
+// The second result gives, for each object, the absolute path of the file it
+// came from ("" when unknown, e.g. generated objects without a source file).
+func build(dir string, ov overlay) ([]model.Object, []string, error) {
 	dir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		return nil, fmt.Errorf("path %q is not a directory", dir)
+		return nil, nil, fmt.Errorf("path %q is not a directory", dir)
 	}
 
-	target := dir
-	if !hasKustomization(dir) || !ov.empty() {
-		tmp, err := os.MkdirTemp("", "fluxlint-")
-		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(tmp)
-		if tmp, err = filepath.EvalSymlinks(tmp); err != nil {
-			return nil, err
-		}
-		if err := writeWrapper(tmp, dir, ov); err != nil {
-			return nil, err
-		}
-		target = tmp
+	// Always build through a wrapper: it carries the Flux overlay and turns on
+	// kustomize's origin annotations, which is how findings get a file.
+	target, err := os.MkdirTemp("", "fluxlint-")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer os.RemoveAll(target)
+	if target, err = filepath.EvalSymlinks(target); err != nil {
+		return nil, nil, err
+	}
+	if err := writeWrapper(target, dir, ov); err != nil {
+		return nil, nil, err
 	}
 
 	buildMu.Lock()
@@ -105,17 +106,52 @@ func build(dir string, ov overlay) ([]model.Object, error) {
 	opts.LoadRestrictions = types.LoadRestrictionsNone
 	rm, err := krusty.MakeKustomizer(opts).Run(filesys.MakeFsOnDisk(), target)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := make([]model.Object, 0, rm.Size())
+	origins := make([]string, 0, rm.Size())
 	for _, r := range rm.Resources() {
 		m, err := r.Map()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		out = append(out, model.Object(m))
+		o := model.Object(m)
+		origins = append(origins, takeOrigin(o, target))
+		out = append(out, o)
 	}
-	return out, nil
+	return out, origins, nil
+}
+
+const originAnnotation = "config.kubernetes.io/origin"
+
+// takeOrigin removes kustomize's origin annotation from o and returns the
+// absolute path it names.
+func takeOrigin(o model.Object, base string) string {
+	ann, _ := model.Get(o, "metadata", "annotations").(map[string]any)
+	raw, _ := ann[originAnnotation].(string)
+	if raw == "" {
+		return ""
+	}
+	delete(ann, originAnnotation)
+	if len(ann) == 0 {
+		delete(o["metadata"].(map[string]any), "annotations")
+	}
+	var origin struct {
+		Path         string `json:"path"`
+		Repo         string `json:"repo"`
+		ConfiguredIn string `json:"configuredIn"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &origin); err != nil || origin.Repo != "" {
+		return ""
+	}
+	p := origin.Path
+	if p == "" {
+		p = origin.ConfiguredIn
+	}
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(filepath.Join(base, p))
 }
 
 func writeWrapper(tmp, dir string, ov overlay) error {
@@ -145,6 +181,7 @@ func writeWrapper(tmp, dir string, ov overlay) error {
 		}
 	}
 	k["resources"] = resources
+	k["buildMetadata"] = []string{"originAnnotations"}
 	if len(ov.Patches) > 0 {
 		k["patches"] = ov.Patches
 	}

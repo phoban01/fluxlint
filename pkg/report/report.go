@@ -60,6 +60,9 @@ func Text(w io.Writer, s Summary, verbose bool) {
 				where += ": "
 			}
 			fmt.Fprintf(w, "  %-7s %s %s  %s%s\n", f.Severity, f.Rule, f.Name, where, f.Message)
+			if f.File != "" {
+				fmt.Fprintf(w, "            at %s:%d\n", f.File, f.Line)
+			}
 			for _, d := range f.Detail {
 				fmt.Fprintf(w, "            %s\n", d)
 			}

@@ -552,3 +552,55 @@ func TestPodSecurityViolation(t *testing.T) {
 	r := check(t, dir)
 	expectOnly(t, r, "FL-V002", "Deployment/podinfo/podinfo-green", "baseline", "host namespaces")
 }
+
+// ---------------------------------------------------------------------------
+// Reporting
+
+// Findings point at the manifest to fix — also when the offending object lives
+// inside a chart: then it is the HelmRelease that pulls the chart in.
+func TestFindingsCarryRepositoryLocations(t *testing.T) {
+	dir := repo(t)
+	edit(t, dir, "apps/base/namespaces/namespaces.yaml", "  name: team-a\n", "  name: team-b\n")
+	edit(t, dir, "infrastructure/base/controllers/cert-manager.yaml", "    replicaCount: 2\n", "    replicaCount: 2\n    webhook:\n      replicaCount: 0\n")
+
+	report := filepath.Join(t.TempDir(), "gl-code-quality-report.json")
+	cmd := exec.Command(binary, "check", "--repo", dir, "--cache-dir", cacheDir, "--offline", "--format", "gitlab", "--output", report)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err == nil {
+		t.Error("errors must fail the run (exit 1) even when a report file is written")
+	}
+	if !strings.Contains(stdout.String(), "FL-G004") {
+		t.Errorf("with --output the readable report still goes to stdout:\n%s", stdout.String())
+	}
+
+	b, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issues []struct {
+		CheckName string `json:"check_name"`
+		Location  struct {
+			Path  string
+			Lines struct{ Begin int }
+		}
+	}
+	if err := json.Unmarshal(b, &issues); err != nil {
+		t.Fatalf("not a Code Quality report: %v\n%s", err, b)
+	}
+	where := map[string]string{}
+	for _, i := range issues {
+		where[i.CheckName] = i.Location.Path
+		if i.Location.Lines.Begin < 1 {
+			t.Errorf("%s: line must be >= 1", i.CheckName)
+		}
+	}
+	for rule, want := range map[string]string{
+		"FL-G004": "apps/base/rbac/team-a.yaml",                        // the ServiceAccount whose namespace is missing
+		"FL-R004": "infrastructure/base/controllers/cert-manager.yaml", // a webhook inside the chart -> its HelmRelease
+	} {
+		if where[rule] != want {
+			t.Errorf("%s located at %q, want %q (all: %v)", rule, where[rule], want, where)
+		}
+	}
+}

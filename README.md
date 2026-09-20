@@ -38,7 +38,7 @@ An *entrypoint* is the directory a cluster's bootstrap Kustomization points at â
 ```bash
 fluxlint check clusters/production clusters/staging
 fluxlint check -v                  # entrypoints from .fluxlint.yaml, include suggestions
-fluxlint check --format json
+fluxlint check --format json            # also: gitlab, sarif, github
 fluxlint rules
 fluxlint explain FL-G002
 ```
@@ -54,6 +54,36 @@ clusters/production: 12 components (3 not rendered), 214 objects
   warning FL-T007 retry-cliff  flux-system/apps: no retryInterval: a failed apply is not retried for 30m0s (interval)
   info    FL-T001 critical-path  worst-case bootstrap bound is 12m30s
 ```
+
+## In CI
+
+Findings carry the repository file and line of the manifest to fix. When the offending
+object lives inside a chart or an external repository, that is the HelmRelease or
+Kustomization which pulls it in.
+
+```yaml
+# GitLab: inline in the merge request widget
+fluxlint:
+  script:
+    - fluxlint check --format gitlab --output gl-code-quality-report.json
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality-report.json
+  cache:
+    key: fluxlint-sources
+    paths: [.fluxlint-cache]          # with sources.cacheDir: .fluxlint-cache
+```
+
+```yaml
+# GitHub Actions: inline annotations, or SARIF for code scanning
+- run: fluxlint check --format github
+- run: fluxlint check --format sarif --output fluxlint.sarif
+```
+
+With `--output` the machine-readable report goes to the file and the readable one to the
+job log. Code Quality fingerprints ignore line numbers, so GitLab can tell new findings
+from existing ones.
 
 ## Configure
 

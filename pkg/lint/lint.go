@@ -44,6 +44,8 @@ type Finding struct {
 	Entrypoint string   `json:"entrypoint"`
 	Component  string   `json:"component,omitempty"`
 	Object     string   `json:"object,omitempty"`
+	File       string   `json:"file,omitempty"`
+	Line       int      `json:"line,omitempty"`
 	Message    string   `json:"message"`
 	Detail     []string `json:"detail,omitempty"`
 }
@@ -90,6 +92,7 @@ func RuleByID(id string) (Rule, bool) {
 }
 
 type run struct {
+	files    map[string][]string // repository file -> lines, for locations
 	ix       *Index
 	cfg      *config.Config
 	findings []Finding
@@ -117,6 +120,7 @@ func (r *run) reportAs(sev Severity, id string, c *model.Component, o model.Obje
 	if o != nil {
 		f.Object = o.String()
 	}
+	f.File, f.Line = r.locate(c, o)
 	r.findings = append(r.findings, f)
 }
 
@@ -129,7 +133,7 @@ type Result struct {
 
 // Run executes every rule.
 func Run(t *model.Tree, cfg *config.Config) *Result {
-	r := &run{ix: BuildIndex(t, cfg), cfg: cfg}
+	r := &run{ix: BuildIndex(t, cfg), cfg: cfg, files: map[string][]string{}}
 	r.graphRules()
 	r.substitutionRules()
 	r.runtimeRules()

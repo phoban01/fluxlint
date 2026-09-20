@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,8 +72,8 @@ func printUsage(fs *flag.FlagSet) {
 }
 
 type checkOpts struct {
-	repo, cfgPath, format, failOn, cacheDir string
-	verbose, offline, refresh               bool
+	repo, cfgPath, format, failOn, cacheDir, output string
+	verbose, offline, refresh                       bool
 }
 
 func newResolver(o *checkOpts, cfg *config.Config) (*source.Resolver, error) {
@@ -100,7 +101,8 @@ func checkFlags(o *checkOpts) *flag.FlagSet {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.StringVar(&o.repo, "repo", ".", "repository root")
 	fs.StringVar(&o.cfgPath, "config", "", "config file (default <repo>/"+config.DefaultFile+")")
-	fs.StringVar(&o.format, "format", "text", "output format: text or json")
+	fs.StringVar(&o.format, "format", "text", "output format: text, json, gitlab (Code Quality), sarif or github (workflow annotations)")
+	fs.StringVar(&o.output, "output", "", "write the report to this file and print the text report to stdout")
 	fs.StringVar(&o.failOn, "fail-on", "error", "lowest severity that fails the run: error or warning")
 	fs.BoolVar(&o.verbose, "v", false, "also list suggestions (info)")
 	fs.BoolVar(&o.offline, "offline", false, "never use the network: external sources must already be cached")
@@ -164,14 +166,39 @@ func check(args []string) int {
 	}
 
 	sum := report.Summary{Results: results, Elapsed: time.Since(start)}
-	switch o.format {
-	case "json":
-		if err := report.JSON(os.Stdout, sum); err != nil {
+	out := io.Writer(os.Stdout)
+	if o.output != "" {
+		f, err := os.Create(o.output)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 2
 		}
+		defer f.Close()
+		out = f
+		// a CI job wants the machine-readable file and a readable log
+		if o.format != "text" {
+			report.Text(os.Stdout, sum, o.verbose)
+		}
+	}
+	var werr error
+	switch o.format {
+	case "json":
+		werr = report.JSON(out, sum)
+	case "gitlab":
+		werr = report.GitLab(out, sum, o.verbose)
+	case "sarif":
+		werr = report.SARIF(out, sum, o.verbose)
+	case "github":
+		report.GitHub(out, sum, o.verbose)
+	case "text":
+		report.Text(out, sum, o.verbose)
 	default:
-		report.Text(os.Stdout, sum, o.verbose)
+		fmt.Fprintf(os.Stderr, "error: unknown format %q\n", o.format)
+		return 2
+	}
+	if werr != nil {
+		fmt.Fprintln(os.Stderr, "error:", werr)
+		return 2
 	}
 	if sum.Failed(lint.Severity(o.failOn)) {
 		return 1
