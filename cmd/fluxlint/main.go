@@ -234,7 +234,7 @@ func check(args []string) int {
 		}
 	}
 
-	sum := report.Summary{Results: results, Elapsed: time.Since(start)}
+	sum := report.Summary{Results: results, Elapsed: time.Since(start), Version: versionString()}
 	out := io.Writer(os.Stdout)
 	if o.output != "" {
 		f, err := os.Create(o.output)

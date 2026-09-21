@@ -15,6 +15,8 @@ import (
 type Summary struct {
 	Results []*lint.Result
 	Elapsed time.Duration
+	// Version of fluxlint, for reports that are read somewhere else.
+	Version string
 }
 
 func (s Summary) count(sev lint.Severity) int {
@@ -85,23 +87,62 @@ func Text(w io.Writer, s Summary, verbose bool) {
 		s.count(lint.Error), s.count(lint.Warning), s.count(lint.Info), hidden, s.Elapsed.Round(time.Millisecond))
 }
 
-// JSON writes machine readable output.
+// component says what was analysed: a run with no findings on a component
+// that could not be rendered says nothing about it.
+type component struct {
+	Component string `json:"component"`
+	Parent    string `json:"parent,omitempty"`
+	Rendered  bool   `json:"rendered"`
+	// NotRendered is why: the source was unavailable, the build failed, …
+	NotRendered string `json:"notRendered,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Objects     int    `json:"objects"`
+	Source      string `json:"source,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+	FloatingRef string `json:"floatingRef,omitempty"`
+	Path        string `json:"path,omitempty"`
+}
+
+// JSON writes machine readable output: the findings, and enough about the
+// run to judge them (the version, what each component was rendered from, and
+// which Kubernetes release built-in objects were checked against).
 func JSON(w io.Writer, s Summary) error {
 	type entry struct {
-		Entrypoint string         `json:"entrypoint"`
-		Findings   []lint.Finding `json:"findings"`
-		Timing     *lint.Timing   `json:"timing,omitempty"`
+		Entrypoint  string         `json:"entrypoint"`
+		KubeRelease string         `json:"kubeRelease,omitempty"`
+		Findings    []lint.Finding `json:"findings"`
+		Timing      *lint.Timing   `json:"timing,omitempty"`
+		Components  []component    `json:"components"`
 	}
 	out := struct {
+		Version     string  `json:"version,omitempty"`
 		Entrypoints []entry `json:"entrypoints"`
 		ElapsedMS   int64   `json:"elapsedMs"`
-	}{ElapsedMS: s.Elapsed.Milliseconds()}
+	}{Version: s.Version, ElapsedMS: s.Elapsed.Milliseconds()}
 	for _, r := range s.Results {
 		f := r.Findings
 		if f == nil {
 			f = []lint.Finding{}
 		}
-		out.Entrypoints = append(out.Entrypoints, entry{r.Tree.Entrypoint, f, r.Timing})
+		e := entry{Entrypoint: r.Tree.Entrypoint, KubeRelease: r.Tree.KubeRelease, Findings: f, Timing: r.Timing, Components: []component{}}
+		for _, c := range r.Tree.Components {
+			cc := component{Component: c.String(), Rendered: c.Opaque == "", NotRendered: c.Opaque, Objects: len(c.Objects),
+				Revision: c.SourceRevision, FloatingRef: c.FloatingRef, Path: c.Path}
+			if c.Parent != nil {
+				cc.Parent = c.Parent.String()
+			}
+			if c.Source.Name != "" {
+				cc.Source = c.Source.String()
+			}
+			switch {
+			case c.BuildErr != nil:
+				cc.Error = c.BuildErr.Error()
+			case c.SourceErr != nil:
+				cc.Error = c.SourceErr.Error()
+			}
+			e.Components = append(e.Components, cc)
+		}
+		out.Entrypoints = append(out.Entrypoints, e)
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

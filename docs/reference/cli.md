@@ -46,9 +46,11 @@ Several entrypoints are analysed in parallel and share their builds.
 
 ```json
 {
+  "version": "fluxlint v0.2.0 go1.26.0 linux/amd64",
   "entrypoints": [
     {
       "entrypoint": "clusters/production",
+      "kubeRelease": "v1.35.0",
       "findings": [
         {
           "rule": "FL-G004",
@@ -68,7 +70,14 @@ Several entrypoints are analysed in parallel and share their builds.
           {"event": "start(flux-system/apps)", "at": 0, "added": 0, "reason": "created by parent"},
           {"event": "ready(flux-system/apps)", "at": 300000000000, "added": 300000000000, "reason": "apply and health timeout"}
         ]
-      }
+      },
+      "components": [
+        {"component": "flux-system/apps", "parent": "clusters/production", "rendered": true, "objects": 42, "path": "./apps"},
+        {"component": "flux-system/operator", "parent": "clusters/production", "rendered": false,
+         "notRendered": "source GitRepository/flux-system/operator unavailable",
+         "error": "https://git.example.com/operator (tag v1.2.0): authentication required",
+         "objects": 0, "source": "GitRepository/flux-system/operator", "path": "./config/default"}
+      ]
     }
   ],
   "elapsedMs": 940
@@ -78,6 +87,21 @@ Several entrypoints are analysed in parallel and share their builds.
 Durations are nanoseconds. Some findings carry a `detail` list of extra lines. With
 `--base`, findings that also exist at the base carry
 `"existing": true`.
+
+`components` lists everything the entrypoint reconciles and whether fluxlint could
+render it. Read it before the findings: a component that was not rendered has no
+findings because it was not looked at, not because it is clean. `kubeRelease` is the
+Kubernetes release whose API schemas built-in objects were checked against; it is
+absent when they could not be loaded.
+
+To hand a run to someone else, this is the file to send:
+
+```bash
+fluxlint check -v --format json --output fluxlint-report.json
+```
+
+It holds object names, file paths, source URLs and the text of error messages. It holds
+no manifest contents, Secret values or credentials.
 
 ## graph
 
