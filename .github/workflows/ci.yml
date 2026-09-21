@@ -75,7 +75,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .fluxlint-cache/e2e
           key: e2e-sources-${{ hashFiles('e2e/testdata/**') }}
