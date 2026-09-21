@@ -256,12 +256,16 @@ func (r *run) admissionWindows(declared *graph.Graph) {
 			if !c.HasRetryInterval {
 				penalty = c.Interval
 			}
-			what := fmt.Sprintf("%s (and %d more)", h.first, h.count-1)
+			what := h.first.String() + " (and others)"
 			if h.count == 1 {
 				what = h.first.String()
 			}
 			hook := fmt.Sprintf("webhook %s of %s", model.Str(g.hook, "name"), g.config)
 			detail := []string{fmt.Sprintf("an apply rejected in that window is retried after %v", penalty)}
+			if h.count > 1 {
+				// kept out of the message: the count moves with every object added
+				detail = append(detail, fmt.Sprintf("%d objects of %s go through this webhook", h.count, c))
+			}
 			if g.why != "" {
 				detail = append(detail, g.why)
 			}
@@ -364,8 +368,11 @@ func (r *run) singlePodGates(guarded map[string]map[string]bool, gateOf map[stri
 		if len(others) >= 3 {
 			sev = Warning
 		}
-		r.reportAs(sev, "FL-R013", g.owner, backend, fmt.Sprintf("is the only pod behind fail-closed webhook %s, which admits the applies of %d other component(s): while it restarts, every one of them is rejected (%s)",
-			model.Str(g.hook, "name"), len(others), list), detail...)
+		// how many depend on it changes with every component added; keep it
+		// out of the message so that --base does not see a new finding each time
+		detail = append([]string{fmt.Sprintf("%d other component(s) go through it: %s", len(others), list)}, detail...)
+		r.reportAs(sev, "FL-R013", g.owner, backend, fmt.Sprintf("is the only pod behind fail-closed webhook %s, which admits the applies of other components: while it restarts, every one of them is rejected",
+			model.Str(g.hook, "name")), detail...)
 	}
 }
 

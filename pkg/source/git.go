@@ -149,9 +149,7 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 		if ctx.Err() != nil {
 			msg = "timed out"
 		}
-		if i := strings.LastIndex(msg, "\n"); i >= 0 {
-			msg = msg[i+1:]
-		}
+		msg = gitReason(msg)
 		return "", fmt.Errorf("git %s: %s", args[0], msg)
 	}
 	return strings.TrimSpace(string(out)), nil
@@ -160,4 +158,30 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 func dirExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
+}
+
+// gitReason picks what git or the server actually said out of stderr. A
+// server's answer comes as several "remote:" lines, often ending in an empty
+// one, so the last line alone can be just "remote:".
+func gitReason(stderr string) string {
+	var said []string
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "remote:"))
+		if line == "" || strings.Trim(line, "=-*") == "" {
+			continue
+		}
+		said = append(said, line)
+	}
+	for _, line := range said {
+		if strings.HasPrefix(line, "fatal:") || strings.HasPrefix(line, "error:") {
+			return line
+		}
+	}
+	if len(said) == 0 {
+		return strings.TrimSpace(stderr)
+	}
+	if len(said) > 3 {
+		said = said[:3]
+	}
+	return strings.Join(said, " ")
 }
