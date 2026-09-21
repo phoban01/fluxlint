@@ -131,3 +131,33 @@ func TestCELValidationRulesInCRD(t *testing.T) {
 		t.Fatalf("the CRD author's CEL rule must be enforced:\n%s", messages(r.Findings))
 	}
 }
+
+// The admission plugin parses these labels, and refuses a Namespace it
+// cannot parse. A version needs its "v".
+func TestPodSecurityLabelsMustParse(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "namespaces", "namespaces", ""))
+	write(t, dir, "namespaces/all.yaml", `apiVersion: v1
+kind: Namespace
+metadata:
+  name: good
+  labels: {pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn-version: v1.31}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: no-v
+  labels: {pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn-version: "1.31"}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bad-level
+  labels: {pod-security.kubernetes.io/enforce: Restricted}
+`)
+	got := find(analyseDir(t, dir, nil), "FL-V002")
+	text := messages(got)
+	if len(got) != 2 || !strings.Contains(text, "Namespace/no-v") || !strings.Contains(text, `must be "latest" or "v1.x"`) || !strings.Contains(text, "Namespace/bad-level") {
+		t.Errorf("want the version without a v and the misspelt level:\n%s", text)
+	}
+}

@@ -27,6 +27,7 @@ import (
 )
 
 func (r *run) admissionRules() {
+	r.podSecurityLabels()
 	r.podSecurity()
 	r.customResources()
 	r.builtins()
@@ -125,6 +126,30 @@ func (r *run) builtins() {
 // podSecurity evaluates every pod template against the Pod Security level its
 // namespace enforces, with the evaluator the API server itself uses. A
 // violation means the pods are never created.
+// podSecurityLabels checks the pod-security.kubernetes.io labels of every
+// Namespace with the parser the admission plugin uses. The plugin refuses to
+// create a Namespace whose labels it cannot parse, and refuses an update that
+// makes them unparseable: "restricted" and "v1.31" are values, "Restricted" and
+// "1.31" are not.
+func (r *run) podSecurityLabels() {
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			if o.Kind() != "Namespace" || o.Group() != "" {
+				continue
+			}
+			_, errs := psaapi.PolicyToEvaluate(labelsOf(o), psaapi.Policy{})
+			if len(errs) == 0 {
+				continue
+			}
+			detail := make([]string, len(errs))
+			for i, e := range errs {
+				detail[i] = e.Error()
+			}
+			r.report("FL-V002", c, o, "has Pod Security labels the admission plugin cannot parse: the API server refuses to create the Namespace, or to change its labels to this", detail...)
+		}
+	}
+}
+
 func (r *run) podSecurity() {
 	evaluator, err := psapolicy.NewEvaluator(psapolicy.DefaultChecks(), nil)
 	if err != nil {

@@ -99,7 +99,7 @@ A built-in object has the right fields and types but a value the API server reje
 
 Default severity: **error**
 
-A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created.
+A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created. Also reports a Namespace whose pod-security.kubernetes.io labels the plugin cannot parse (a level that is not privileged, baseline or restricted; a version that is not latest or v1.x, such as 1.31 without the v): the API server refuses to create such a Namespace.
 
 ### FL-V005 policy-violation
 
