@@ -654,3 +654,54 @@ func (r *run) sourceCredentials() {
 		}
 	}
 }
+
+// valuesReferences reports a HelmRelease whose valuesFrom names a Secret or
+// ConfigMap, or a key of one, that nothing creates. helm-controller refuses
+// to install: "could not resolve Secret chart values reference … key not
+// found", and the release stays not Ready.
+func (r *run) valuesReferences() {
+	opaque := 0
+	for _, c := range r.ix.Tree.Components {
+		if c.Opaque != "" {
+			opaque++
+		}
+	}
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			if !o.IsHelmRelease() {
+				continue
+			}
+			for _, v := range model.List(o, "spec", "valuesFrom") {
+				if model.Bool(v, "optional") {
+					continue
+				}
+				kind, name, key := model.Str(v, "kind"), model.Str(v, "name"), model.Str(v, "valuesKey")
+				if key == "" {
+					key = "values.yaml"
+				}
+				index := r.ix.Wiring.secrets
+				if kind == "ConfigMap" {
+					index = r.ix.Wiring.configMaps
+				}
+				producers := index[nn(o.Namespace(), name)]
+				if len(producers) == 0 {
+					msg := fmt.Sprintf("valuesFrom names %s %s, which nothing creates: helm-controller cannot compose the values and the release is never installed", kind, nn(o.Namespace(), name))
+					if opaque > 0 {
+						r.reportAs(Warning, "FL-R015", c, o, msg, fmt.Sprintf("low confidence: %d component(s) are not rendered and may create it", opaque))
+					} else {
+						r.report("FL-R015", c, o, msg, "mark the entry optional: true if the release should install without it")
+					}
+					continue
+				}
+				defined := false
+				for _, p := range producers {
+					defined = defined || p.Keys == nil || p.Keys[key]
+				}
+				if !defined {
+					r.report("FL-R015", c, o, fmt.Sprintf("valuesFrom needs key %q of %s %s, but %s only defines %s: helm-controller cannot compose the values and the release is never installed",
+						key, kind, nn(o.Namespace(), name), describeProducers(producers), definedKeys(producers)))
+				}
+			}
+		}
+	}
+}

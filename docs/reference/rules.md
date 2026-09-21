@@ -195,6 +195,12 @@ Default severity: **error**
 
 A GitRepository, OCIRepository, HelmRepository or Bucket names a Secret (secretRef, certSecretRef, proxySecretRef) that nothing creates: not a manifest, an ExternalSecret, a ClusterExternalSecret selecting the namespace, nor externals.secrets. The source never becomes Ready and everything that reads from it waits. The repository's own source is left out: flux bootstrap creates its Secret in the cluster. A warning when some component could not be rendered and may create it.
 
+### FL-R015 values-reference
+
+Default severity: **error**
+
+A HelmRelease's valuesFrom names a Secret or ConfigMap, or a key of one (valuesKey, default values.yaml), that nothing creates. helm-controller cannot compose the values ("could not resolve Secret chart values reference … key not found"), so the release is never installed. Producers are manifests, ExternalSecrets, ClusterExternalSecrets selecting the namespace, Certificates and externals.secrets; one that does not list its keys (an ExternalSecret with dataFrom) is taken to have any key. Entries marked optional are skipped.
+
 ## Contracts
 
 What a controller or chart declares it cannot run without.

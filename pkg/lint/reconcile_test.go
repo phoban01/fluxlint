@@ -430,3 +430,45 @@ spec:
 		t.Errorf("declared under externals.secrets:\n%s", messages(got))
 	}
 }
+
+// Seen in a real cluster as "could not resolve Secret chart values reference
+// … with key …: key not found".
+func TestValuesReference(t *testing.T) {
+	const release = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: runner, namespace: default}
+spec:
+  interval: 10m
+  chart:
+    spec: {chart: runner, version: 1.0.0, sourceRef: {kind: HelmRepository, name: charts, namespace: flux-system}}
+  valuesFrom:
+    - {kind: Secret, name: runner-credentials, valuesKey: serverUrl, targetPath: serverUrl}
+    - {kind: Secret, name: runner-credentials, valuesKey: token, targetPath: token}
+    - {kind: ConfigMap, name: runner-defaults}
+    - {kind: ConfigMap, name: not-there}
+    - {kind: ConfigMap, name: may-be-absent, optional: true}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: runner-credentials, namespace: default}
+spec:
+  secretStoreRef: {name: vault, kind: ClusterSecretStore}
+  data:
+    - {secretKey: token, remoteRef: {key: runner, property: token}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: runner-defaults, namespace: default}
+data: {values.yaml: "replicas: 1"}
+`
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "runner", "runner", ""))
+	write(t, dir, "runner/all.yaml", release)
+	cfg := config.Default()
+	cfg.Externals.CRDGroups = append(cfg.Externals.CRDGroups, "external-secrets.io")
+	got := find(analyseDir(t, dir, cfg), "FL-R015")
+	text := messages(got)
+	if len(got) != 2 || !strings.Contains(text, `needs key "serverUrl" of Secret default/runner-credentials`) || !strings.Contains(text, "ConfigMap default/not-there, which nothing creates") {
+		t.Errorf("want the missing key and the missing ConfigMap, and nothing else:\n%s", text)
+	}
+}
