@@ -138,6 +138,7 @@ func (r *run) transitionRules(base, head *model.Tree) {
 			r.report("FL-D002", a.c, a.o, "changes immutable field(s): the apply is rejected and the component stays NotReady until the object is deleted or the Kustomization sets force: true", fields...)
 		}
 	}
+	r.updatePolicies(before, after)
 }
 
 // immutable lists, per kind, the paths the API server refuses to update.

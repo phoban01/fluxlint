@@ -94,3 +94,82 @@ func TestExistingFindingsDoNotFailABaseRun(t *testing.T) {
 		t.Fatalf("existing=%v fresh=%v", existing, fresh)
 	}
 }
+
+const gadgetPolicies = `---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: known-mode}
+spec:
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [example.test], apiVersions: ["*"], resources: [gadgets], operations: [CREATE, UPDATE]}
+  validations:
+    - expression: "!has(object.metadata.labels) || !('stage' in object.metadata.labels) || object.metadata.labels['stage'] in ['dev', 'prod']"
+      message: stage must be dev or prod
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: known-mode}
+spec: {policyName: known-mode, validationActions: [Deny]}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: size-is-immutable}
+spec:
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: ["*"], apiVersions: ["*"], resources: [gadgets], operations: [UPDATE]}
+  validations:
+    - expression: "!has(oldObject.spec.size) || oldObject.spec.size == object.spec.size"
+      message: the size of a gadget cannot change
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: size-is-immutable}
+spec: {policyName: size-is-immutable, validationActions: [Deny]}
+`
+
+func policyRepo(t *testing.T, gadgets, policies string) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "gadgets", "gadgets", ""))
+	write(t, dir, "gadgets/crd.yaml", gadgetCRD)
+	write(t, dir, "gadgets/policies.yaml", policies)
+	write(t, dir, "gadgets/crs.yaml", gadgets)
+	return dir
+}
+
+func labelled(name, stage string, size int) string {
+	return fmt.Sprintf("---\napiVersion: example.test/v1\nkind: Gadget\nmetadata:\n  name: %s\n  namespace: default\n  labels: {stage: %s}\nspec: {size: %d}\n", name, stage, size)
+}
+
+// The repository's own admission policies, evaluated by the API server's code.
+func TestAdmissionPolicyOnCreate(t *testing.T) {
+	r := analyseDir(t, policyRepo(t, labelled("ok", "prod", 1)+labelled("typo", "prd", 1), gadgetPolicies), nil)
+	got := find(r, "FL-V005")
+	if len(got) != 1 || got[0].Severity != lint.Error || !strings.Contains(messages(got), "Gadget/default/typo") ||
+		!strings.Contains(messages(got), "known-mode") || !strings.Contains(messages(got), "stage must be dev or prod") {
+		t.Errorf("want one rejection, of the typo, with the policy's message:\n%s", messages(got))
+	}
+}
+
+// oldObject rules can only speak when there is an old object: with --base.
+func TestAdmissionPolicyOnUpdate(t *testing.T) {
+	base := policyRepo(t, labelled("a", "prod", 1)+labelled("b", "prod", 1), gadgetPolicies)
+	head := policyRepo(t, labelled("a", "prod", 2)+labelled("b", "dev", 1), gadgetPolicies)
+	got := find(compare(t, base, head), "FL-V005")
+	if len(got) != 1 || !strings.Contains(messages(got), "Gadget/default/a") || !strings.Contains(messages(got), "rejects this update: the size of a gadget cannot change") {
+		t.Errorf("want the resize of a rejected, and the relabel of b allowed:\n%s", messages(got))
+	}
+	if alone := find(analyseDir(t, head, nil), "FL-V005"); len(alone) != 0 {
+		t.Errorf("without a base nothing is an update:\n%s", messages(alone))
+	}
+}
+
+func TestAdmissionPolicyThatDoesNotCompile(t *testing.T) {
+	broken := strings.Replace(gadgetPolicies, "oldObject.spec.size == object.spec.size", "oldObject.spec.size = object.spec.size", 1)
+	got := find(analyseDir(t, policyRepo(t, labelled("a", "prod", 1), broken), nil), "FL-V006")
+	if len(got) != 1 || !strings.Contains(messages(got), "ValidatingAdmissionPolicy/size-is-immutable") {
+		t.Errorf("got:\n%s", messages(got))
+	}
+}

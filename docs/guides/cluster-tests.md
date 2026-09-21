@@ -25,7 +25,8 @@ that are several separate claims.
 | the change can be applied over what is running | **no**: the cluster is new | yes, with `--base` (`FL-D002`, `FL-D003`) |
 | images exist, for the platform the nodes run | yes, as `ImagePullBackOff` and a timeout | yes, by asking the registry (`FL-X004`, with `images.verify`) |
 | containers stay up | for the pods it starts | **no**; a [contract](contracts.md) test in the component's own CI covers the usual cause |
-| policies that a controller registers at runtime admit the objects | yes | **no** |
+| the repository's admission policies admit its objects | yes, on create | yes: ValidatingAdmissionPolicies with the API server's code (`FL-V005`), Kyverno policies with Kyverno's CLI (`FL-V007`). With `--base`, on update too, where immutability rules speak |
+| webhooks from outside the repository admit the objects | yes | **no** |
 | a controller's output is correct | yes | **no** |
 
 Two rows deserve a second look.
@@ -112,7 +113,7 @@ Run both for a few weeks and count.
 
 - If every cluster-test failure was either predicted by fluxlint or a flake, the cluster
   test is costing you its runtime and proving nothing more on merge requests. Move it to
-  a nightly job, where it still tests that containers stay up and runtime policy, and let fluxlint gate
+  a nightly job, where it still tests that containers stay up, and let fluxlint gate
   merge requests.
 - If `FL-O001` keeps finding real problems of a kind you cannot express as a rule, keep
   the cluster test on merge requests, and run fluxlint first so that the quick failures

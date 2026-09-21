@@ -101,6 +101,24 @@ Default severity: **error**
 
 A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created.
 
+### FL-V005 policy-violation
+
+Default severity: **error**
+
+A ValidatingAdmissionPolicy that the repository installs, bound with Deny, rejects an object that the repository renders. The policy is compiled and evaluated with the API server's own code: matchConstraints, matchConditions, variables, parameters that are in Git, namespaceObject, and request.userInfo set to the Flux controller's ServiceAccount. Every object is evaluated as a create. With --base, every object the change modifies is also evaluated as an update with oldObject, which is where immutability rules speak. A binding that only warns gives a warning; one that only audits is skipped. An expression that needs the authorizer, or a parameter that is not in Git, is listed as not evaluated.
+
+### FL-V006 policy-invalid
+
+Default severity: **error**
+
+A bound ValidatingAdmissionPolicy has an expression that does not compile. With failurePolicy: Fail, which is the default, the API server then rejects every request the policy matches.
+
+### FL-V007 kyverno-violation
+
+Default severity: **error**
+
+A Kyverno policy that the repository installs, in Enforce mode, rejects an object that the repository renders. Kyverno's engine cannot be linked into another program, so the policies are evaluated by the kyverno CLI, which is that engine: install the version your clusters run and the verdict is the one they would give. Nothing is downloaded or started; when the CLI is not on PATH the policies are listed as not evaluated. Failures of Audit policies, and rules that need the cluster (apiCall, configMap context), are suggestions. Policy exceptions in the repository are honoured. Policies that mutate or generate are not applied.
+
 ## Runtime
 
 Whether pods can start once their objects are applied.

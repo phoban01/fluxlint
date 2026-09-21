@@ -184,6 +184,29 @@ contracts:
 run of characters. Only images that match are looked up. With no patterns, fluxlint
 never asks a registry about an image.
 
+## kyverno
+
+```yaml
+kyverno:
+  command: /usr/local/bin/kyverno
+```
+
+When the repository installs Kyverno policies that validate, fluxlint gives them and
+every rendered object to the `kyverno` CLI and reports what an `Enforce` policy rejects
+as `FL-V007`. `command` is the CLI to run, and defaults to `kyverno` on `PATH`.
+
+The CLI is Kyverno's engine in one binary. Kyverno cannot be linked into fluxlint: it
+builds against its own forks of the Kubernetes libraries. Running the CLI also means
+the verdict comes from the version you install, which can be the version your clusters
+run.
+
+fluxlint never downloads or starts anything. If the CLI is not there, the run says how
+many policies were not evaluated (`-v`). Get the CLI from the
+[Kyverno releases](https://github.com/kyverno/kyverno/releases).
+
+ValidatingAdmissionPolicies need no setup. fluxlint evaluates them in process, with the
+API server's own code (`FL-V005`).
+
 ## images
 
 ```yaml

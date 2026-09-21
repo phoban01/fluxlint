@@ -32,6 +32,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # FL-V007 is Kyverno's own verdict, so its test needs Kyverno's CLI
+      - name: kyverno CLI
+        env:
+          KYVERNO_VERSION: v1.19.1
+          KYVERNO_SHA256: b38228f367fc0fdc2b08f4c83ea50ac5f16c60ff8d62d76a66157c33c47b70ae
+        run: |
+          curl -sSfL -o kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_SHA256}  kyverno.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin" && tar -xzf kyverno.tar.gz -C "$HOME/.local/bin" kyverno
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          rm kyverno.tar.gz
+      - name: the kyverno test must run, not skip
+        run: go test ./pkg/lint/ -run TestKyvernoPolicies -v | tee /dev/stderr | grep -q -- "--- PASS: TestKyvernoPolicies"
       - run: make test
       - name: contract module
         run: cd contract && go vet ./... && go test -race -count=1 ./...

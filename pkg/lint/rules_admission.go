@@ -29,6 +29,8 @@ func (r *run) admissionRules() {
 	r.podSecurity()
 	r.customResources()
 	r.builtins()
+	r.admissionPolicies()
+	r.kyvernoPolicies()
 }
 
 var strictDecoder = kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, scheme.Scheme, scheme.Scheme, kjson.SerializerOptions{Strict: true})

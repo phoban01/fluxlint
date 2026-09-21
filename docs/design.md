@@ -22,8 +22,9 @@ the core knows about any particular repository layout, operator, or company.
   overlap, `--cluster-state` compares fluxlint's verdict with a real cluster's and
   reports every failure it did not predict ([Run beside a cluster
   test](guides/cluster-tests.md)).
-- Replacing policy engines. fluxlint can *invoke* policy evaluation over the
-  rendered objects, but the rules it owns are about convergence, not style.
+- Replacing policy engines. fluxlint evaluates the policies you install, with the
+  engines' own code, over the rendered objects. The rules it owns are about
+  convergence, not style.
 
 ## 2. Model
 
@@ -256,8 +257,11 @@ Before 1.0:
 ## 8. Known limits
 
 - Controller logic is invisible without a contract.
-- Admission webhooks that a controller registers at runtime (policy engines), and
-  webhooks with `matchConditions`, are not evaluated.
+- ValidatingAdmissionPolicies are evaluated with the API server's code, and Kyverno
+  policies by Kyverno's CLI when it is installed. Other admission webhooks are not
+  evaluated: fluxlint knows when one can reject an apply (`FL-R008`), not what it
+  decides. Policies that mutate or generate are not applied. Webhooks with
+  `matchConditions` are left out of `FL-R008`.
 - Races are found by their cause (an ordering that leaves a window), not observed.
   A race with a cause fluxlint does not model is invisible; `--cluster-state` is how
   such a gap gets noticed.

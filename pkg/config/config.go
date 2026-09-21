@@ -62,6 +62,9 @@ type Config struct {
 
 	Contracts Contracts `json:"contracts"`
 
+	// Kyverno configures the evaluation of Kyverno policies.
+	Kyverno Kyverno `json:"kyverno"`
+
 	// Images configures checks against container registries.
 	Images Images `json:"images"`
 }
@@ -241,6 +244,13 @@ type Rules struct {
 	// package fills them in, because it owns the catalogue.
 	Off   map[string]bool   `json:"-"`
 	Level map[string]string `json:"-"`
+}
+
+// Kyverno says how Kyverno policies are evaluated.
+type Kyverno struct {
+	// Command is the kyverno CLI to run: a name on PATH or a path. Default
+	// "kyverno". The policies are skipped, and said to be, when it is absent.
+	Command string `json:"command"`
 }
 
 // Images configures which container images are looked up in their registry.
