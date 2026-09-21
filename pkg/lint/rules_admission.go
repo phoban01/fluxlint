@@ -59,6 +59,9 @@ func (r *run) builtins() {
 	} else if t.SchemaNote != "" {
 		r.report("FL-X003", nil, nil, fmt.Sprintf("built-in objects were checked against the Kubernetes types bundled with fluxlint, not against kubeVersion %s: %s", r.cfg.KubeVersion, t.SchemaNote))
 	}
+	if t.APINote != "" {
+		r.report("FL-X003", nil, nil, t.APINote)
+	}
 	release := strings.TrimPrefix(t.KubeRelease, "v")
 
 	for _, c := range t.Components {

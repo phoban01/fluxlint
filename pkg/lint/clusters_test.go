@@ -105,3 +105,33 @@ metadata: {name: settings, namespace: nowhere}
 		t.Errorf("want only the ConfigMap's namespace:\n%s", messages(got))
 	}
 }
+
+// A Namespace declared twice, identically, is a hazard and not a fight.
+func TestNamespaceDeclaredTwice(t *testing.T) {
+	repo := func(second string) string {
+		dir := t.TempDir()
+		write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "namespaces", "namespaces", "")+"---\n"+fmt.Sprintf(ksHeader, "operator", "operator", ""))
+		write(t, dir, "namespaces/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: operator-system}\n")
+		write(t, dir, "operator/ns.yaml", second)
+		return dir
+	}
+	same := find(analyseDir(t, repo("apiVersion: v1\nkind: Namespace\nmetadata: {name: operator-system}\n"), nil), "FL-G003")
+	if len(same) != 1 || same[0].Severity != lint.Warning || !strings.Contains(messages(same), "identical") {
+		t.Errorf("identical copies: want one warning, got:\n%s", messages(same))
+	}
+	differ := find(analyseDir(t, repo("apiVersion: v1\nkind: Namespace\nmetadata: {name: operator-system, labels: {tier: ops}}\n"), nil), "FL-G003")
+	if len(differ) != 1 || differ[0].Severity != lint.Error {
+		t.Errorf("copies that differ overwrite each other on every reconcile: want an error, got:\n%s", messages(differ))
+	}
+}
+
+// The kubelet starts a pod whose pull secret does not exist.
+func TestMissingPullSecretIsAWarning(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "app", "app", ""))
+	write(t, dir, "app/all.yaml", deployment("web", "default", 1, "imagePullSecrets: [{name: not-there}]\ncontainers: [{name: a, image: registry.example.test/a:v1}]\n"))
+	got := find(analyseDir(t, dir, nil), "FL-R002")
+	if len(got) != 1 || got[0].Severity != lint.Warning || !strings.Contains(messages(got), "default/not-there") {
+		t.Errorf("got:\n%s", messages(got))
+	}
+}

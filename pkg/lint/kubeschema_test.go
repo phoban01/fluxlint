@@ -182,3 +182,30 @@ func TestKubeSchemasAreFetchedOnce(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// What a release serves is read from the discovery documents it publishes.
+func TestKubeAPIVersions(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "v1.30.0", "api", "discovery")
+	write(t, dir, "api__v1.json", `{"kind": "APIResourceList", "groupVersion": "v1", "resources": [
+  {"name": "pods", "kind": "Pod"}, {"name": "pods/status", "kind": "Pod"}, {"name": "configmaps", "kind": "ConfigMap"}]}`)
+	// an older release only has the beta form of the aggregated document
+	write(t, dir, "aggregated_v2beta1.json", `{"items": [
+  {"metadata": {"name": "policy"}, "versions": [{"version": "v1", "resources": [{"resource": "poddisruptionbudgets", "responseKind": {"kind": "PodDisruptionBudget"}}]}]},
+  {"metadata": {"name": "resource.k8s.io"}, "versions": [{"version": "v1alpha3", "resources": [{"resource": "resourceclaims", "responseKind": {"kind": "ResourceClaim"}}]}]}]}`)
+	res, err := source.New(source.Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := res.KubeAPIVersions(context.Background(), base, "v1.30.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "policy/v1 policy/v1/PodDisruptionBudget v1 v1/ConfigMap v1/Pod"
+	if strings.Join(got, " ") != want {
+		t.Errorf("got  %v\nwant %s (alpha versions are not served unless a cluster is told to)", got, want)
+	}
+	if _, err := res.KubeAPIVersions(context.Background(), base, "v1.10.0"); err == nil {
+		t.Error("a release without discovery documents must be an error, so that the run can say so")
+	}
+}

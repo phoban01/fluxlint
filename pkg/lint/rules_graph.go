@@ -2,6 +2,7 @@ package lint
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -59,12 +60,27 @@ func (r *run) graphRules() {
 			names[i] = o.String()
 		}
 		var obj model.Object
-		for _, o := range owners[0].Objects {
-			if strings.HasSuffix(id, "\x00"+o.ID()) || o.ID() == id {
-				obj = o
+		same := true
+		for _, owner := range owners {
+			for _, o := range owner.Objects {
+				if strings.HasSuffix(id, "\x00"+o.ID()) || o.ID() == id {
+					if obj == nil {
+						obj = o
+					} else if !reflect.DeepEqual(normalise(map[string]any(obj)), normalise(map[string]any(o))) {
+						same = false
+					}
+				}
 			}
 		}
-		r.report("FL-G003", nil, obj, "managed by "+strings.Join(names, " and "))
+		msg := "managed by " + strings.Join(names, " and ")
+		if same && obj != nil && obj.Kind() == "Namespace" && obj.Group() == "" {
+			// every kubebuilder project ships its own Namespace, and clusters
+			// also declare them centrally. Identical copies do not fight; the
+			// hazard is that pruning either owner deletes the namespace for both
+			r.reportAs(Warning, "FL-G003", nil, obj, msg+". The copies are identical, so they do not overwrite each other, but if either owner stops rendering it and prunes, the namespace and everything in it is deleted")
+			continue
+		}
+		r.report("FL-G003", nil, obj, msg)
 	}
 
 	for _, n := range ix.MissingNamespaces {

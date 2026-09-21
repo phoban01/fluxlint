@@ -2,12 +2,14 @@ package source
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -69,12 +71,14 @@ func (r *Resolver) KubeSchema(ctx context.Context, base, release, group, version
 		r.schemas[key] = c
 	}
 	r.mu.Unlock()
-	c.once.Do(func() { c.data, c.err = r.kubeSchema(ctx, base, release, file) })
+	c.once.Do(func() { c.data, c.err = r.kubeFile(ctx, base, release, "api/openapi-spec/v3", file) })
 	return c.data, c.err
 }
 
-func (r *Resolver) kubeSchema(ctx context.Context, base, release, file string) ([]byte, error) {
-	rel := filepath.Join(release, "api", "openapi-spec", "v3", file)
+// kubeFile reads one file that a Kubernetes release publishes in its
+// repository: an OpenAPI document, or a discovery document.
+func (r *Resolver) kubeFile(ctx context.Context, base, release, dir, file string) ([]byte, error) {
+	rel := filepath.Join(release, filepath.FromSlash(dir), file)
 	if !strings.Contains(base, "://") {
 		b, err := os.ReadFile(filepath.Join(base, rel))
 		if os.IsNotExist(err) {
@@ -121,11 +125,11 @@ func (r *Resolver) kubeSchema(ctx context.Context, base, release, file string) (
 	case resp.StatusCode == http.StatusNotFound:
 		// either the release does not serve this group and version, or there
 		// is no such release: the core document tells the two apart
-		if file != "api__v1_openapi.json" {
-			if _, err := r.kubeSchema(ctx, base, release, "api__v1_openapi.json"); err != nil {
+		if file != "api__v1_openapi.json" && dir == "api/openapi-spec/v3" {
+			if _, err := r.kubeFile(ctx, base, release, "api/openapi-spec/v3", "api__v1_openapi.json"); err != nil {
 				return nil, fmt.Errorf("the API schemas of Kubernetes %s are not at %s: is kubeVersion a released version?", release, base)
 			}
-		} else {
+		} else if dir == "api/openapi-spec/v3" {
 			return nil, fmt.Errorf("the API schemas of Kubernetes %s are not at %s: is kubeVersion a released version?", release, base)
 		}
 		_ = os.WriteFile(slot+".absent", nil, 0o644)
@@ -142,4 +146,82 @@ func (r *Resolver) kubeSchema(ctx context.Context, base, release, file string) (
 		return nil, err
 	}
 	return b, os.Rename(tmp, slot)
+}
+
+// KubeAPIVersions returns what a cluster of the given release answers when
+// asked which APIs it serves: every "group/version" and
+// "group/version/Kind", as Helm's .Capabilities.APIVersions holds them. It is
+// read from the discovery documents the release publishes. Alpha versions are
+// left out: a cluster does not serve them unless told to.
+func (r *Resolver) KubeAPIVersions(ctx context.Context, base, release string) ([]string, error) {
+	if base == "" {
+		base = DefaultSchemaBase
+	}
+	set := map[string]bool{}
+	add := func(group, version, kind string) {
+		if strings.Contains(version, "alpha") {
+			return
+		}
+		gv := version
+		if group != "" {
+			gv = group + "/" + version
+		}
+		set[gv] = true
+		if kind != "" {
+			set[gv+"/"+kind] = true
+		}
+	}
+	core, err := r.kubeFile(ctx, base, release, "api/discovery", "api__v1.json")
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Resources []struct{ Name, Kind string }
+	}
+	if err := json.Unmarshal(core, &list); err != nil {
+		return nil, err
+	}
+	for _, res := range list.Resources {
+		if !strings.Contains(res.Name, "/") {
+			add("", "v1", res.Kind)
+		}
+	}
+	var groups []byte
+	for _, file := range []string{"aggregated_v2.json", "aggregated_v2beta1.json"} {
+		if groups, err = r.kubeFile(ctx, base, release, "api/discovery", file); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	var agg struct {
+		Items []struct {
+			Metadata struct{ Name string }
+			Versions []struct {
+				Version   string
+				Resources []struct {
+					Resource     string
+					ResponseKind struct{ Kind string }
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal(groups, &agg); err != nil {
+		return nil, err
+	}
+	for _, g := range agg.Items {
+		for _, v := range g.Versions {
+			add(g.Metadata.Name, v.Version, "")
+			for _, res := range v.Resources {
+				add(g.Metadata.Name, v.Version, res.ResponseKind.Kind)
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out, nil
 }

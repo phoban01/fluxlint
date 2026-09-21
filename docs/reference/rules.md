@@ -25,7 +25,7 @@ The precedence graph has a cycle, so the repository cannot converge from an empt
 
 Default severity: **error**
 
-The same object is rendered by more than one Flux Kustomization. They overwrite each other on every reconcile, and pruning one deletes the object for both.
+The same object is rendered by more than one Flux Kustomization. They overwrite each other on every reconcile, and pruning one deletes the object for both. Objects applied to different clusters (spec.kubeConfig) are different objects. A Namespace whose copies are identical is a warning: nothing is overwritten, but pruning either owner still deletes it.
 
 ### FL-G004 missing-namespace
 
@@ -133,7 +133,7 @@ A pod references a Secret or ConfigMap (or a key of one) that nothing creates: n
 
 Default severity: **error**
 
-A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Pods are not created, or cannot pull their image.
+A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Without the ServiceAccount, pods are not created. A missing imagePullSecret is a warning: the kubelet starts the pod anyway, and only an image that needs the Secret fails to pull.
 
 ### FL-R003 positional-patch
 

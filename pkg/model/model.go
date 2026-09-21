@@ -255,6 +255,9 @@ type Tree struct {
 	KubeRelease string
 	KubeSchemas map[string][]byte
 	SchemaNote  string
+	// APINote says why charts were rendered with Helm's built-in list of API
+	// versions instead of the release's own.
+	APINote string
 }
 
 // VarUse is one post-build variable referenced by an object of a component.

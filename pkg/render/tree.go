@@ -62,6 +62,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 				continue
 			}
 			spec := r.helmSpecOf(c.Spec)
+			spec.APIVersions = r.apiVersions(ctx)
 			c.RenderNotes = spec.Notes
 			helmWG.Add(1)
 			go func() {
@@ -179,6 +180,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 	}
 	t.ByKey[root.Key()] = root
 	r.loadKubeSchemas(ctx, t)
+	t.APINote = r.apiNote
 	return t, nil
 }
 
@@ -198,6 +200,10 @@ type renderer struct {
 	imagePatterns []*regexp.Regexp
 	// verifyPatterns is cfg.Images.Verify, compiled.
 	verifyPatterns []*regexp.Regexp
+
+	apiOnce sync.Once
+	apis    []string
+	apiNote string
 }
 
 // fetch resolves the external source of every component in level.

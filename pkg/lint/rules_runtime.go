@@ -126,6 +126,12 @@ func (r *run) runtimeRules() {
 				fmt.Sprintf("low confidence: %d component(s) are not rendered and may create it", opaque))
 			continue
 		}
+		if u.Ref.Via == "imagePullSecrets" {
+			// the kubelet carries on without a pull secret it cannot find; only a
+			// private image then fails to pull
+			r.reportAs(Warning, rule, u.Consumer, u.Workload, msg, "the pod still starts if its images can be pulled without this Secret")
+			continue
+		}
 		r.report(rule, u.Consumer, u.Workload, msg)
 	}
 	r.indexedPatches()

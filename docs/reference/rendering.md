@@ -83,6 +83,21 @@ Secrets. Test and delete hooks are left out.
 Each release is a node in the graph, with helm-controller's timeout and install
 retries. A chart that cannot render with your values is reported as `FL-G008`.
 
+### What a chart is told about the cluster
+
+Charts ask `.Capabilities` what the cluster is and render differently for the answer:
+`policy/v1` or `policy/v1beta1`, a ServiceMonitor or none. helm-controller asks the real
+cluster. `helm template` answers from a list built into Helm, which has no kinds and
+still has API versions that were removed years ago, so the same chart can render
+differently offline.
+
+fluxlint answers with what a cluster of your `kubeVersion` serves, read from the
+discovery documents that Kubernetes release publishes (fetched once and cached, like the
+API schemas). Alpha versions are left out, since clusters do not serve them unless told
+to. APIs that come from CRDs are not in the answer yet: a chart that adds a
+ServiceMonitor only when `monitoring.coreos.com/v1` exists renders without it. Releases
+older than 1.30 publish no such document, and Helm's list is used; the run says so.
+
 ## More than one cluster
 
 A Kustomization or HelmRelease with `spec.kubeConfig` applies to another cluster: the

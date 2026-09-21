@@ -237,7 +237,7 @@ func chartKey(c *model.Component, s helmSpec, kubeVersion string) string {
 	if !c.External || c.SourceRevision == "" || c.FloatingRef != "" {
 		return ""
 	}
-	b, err := json.Marshal([]any{c.SourceRoot, c.SourceRevision, s.ReleaseName, s.Namespace, s.Values, s.PostRenderers, kubeVersion})
+	b, err := json.Marshal([]any{c.SourceRoot, c.SourceRevision, s.ReleaseName, s.Namespace, s.Values, s.PostRenderers, kubeVersion, len(s.APIVersions)})
 	if err != nil {
 		return ""
 	}
