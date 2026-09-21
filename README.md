@@ -64,7 +64,7 @@ Pick the directory and the version with `-b` and a tag:
 curl -sSfL https://raw.githubusercontent.com/phoban01/fluxlint/main/install.sh | sh -s -- -b /usr/local/bin v0.1.0
 ```
 
-Windows archives are on the [releases page](https://github.com/phoban01/fluxlint/releases).
+All archives are on the [releases page](https://github.com/phoban01/fluxlint/releases). On Windows, use the Linux binary under WSL.
 With Go installed you can also build from source:
 
 ```bash

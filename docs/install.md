@@ -23,7 +23,7 @@ curl -sSfL https://raw.githubusercontent.com/phoban01/fluxlint/main/install.sh |
 
 ## Release archives
 
-Archives for Linux, macOS and Windows are on the
+Archives for Linux and macOS (amd64 and arm64) are on the
 [releases page](https://github.com/phoban01/fluxlint/releases), with a
 `checksums.txt` beside them.
 

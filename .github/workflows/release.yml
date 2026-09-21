@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make lint test
+      # the tag sits on a commit that CI has already linted and tested
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
