@@ -345,10 +345,19 @@ func TestCRDFromChartWithoutOrdering(t *testing.T) {
 		issuer = issuer || strings.Contains(f.text(), "cert-manager.io/ClusterIssuer from HelmRelease/cert-manager/cert-manager")
 		policy = policy || strings.Contains(f.text(), "kyverno.io/ClusterPolicy from HelmRelease/kyverno/kyverno")
 	}
-	window := r.rule("FL-R008")
-	if len(window) != 1 || !strings.Contains(window[0].text(), "webhook.cert-manager.io") ||
-		!strings.Contains(window[0].text(), "dependsOn: flux-system/infra-controllers") {
-		t.Errorf("the ClusterIssuer can be applied while cert-manager's webhook starts, and the fix is to wait for infra-controllers: %+v", window)
+	// both objects also go through a fail-closed webhook of the chart that
+	// installs their CRD: cert-manager's, and the one Kyverno registers at
+	// runtime for its own policy kinds
+	var windows string
+	for _, f := range r.rule("FL-R008") {
+		if f.Severity == "warning" {
+			windows += f.text() + "\n"
+		}
+	}
+	for _, want := range []string{"webhook.cert-manager.io", "validate-policy.kyverno.svc", "dependsOn: flux-system/infra-controllers"} {
+		if !strings.Contains(windows, want) {
+			t.Errorf("FL-R008 lacks %q:\n%s", want, windows)
+		}
 	}
 	if !issuer || !policy {
 		t.Errorf("both the ClusterIssuer and the ClusterPolicy depend on chart-installed CRDs: %+v", r.rule("FL-T006"))

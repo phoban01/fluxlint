@@ -55,6 +55,13 @@ exists nor after the webhook's component is healthy. It also reports the quieter
 mistake: `dependsOn` a Kustomization that has no `wait: true`, which is Ready as soon as
 it is applied.
 
+**`FL-R013 single-pod-gate`.** Ordering only covers the first start. If one pod serves a
+fail-closed webhook that other components' applies go through, every restart of that
+pod rejects them all. In 200 passing runs of one real cluster test, 55 hit a webhook
+that refused connections, and 50 of those were a single-replica Kyverno. Kyverno's
+webhooks are in no manifest, because it registers them when it starts. fluxlint works
+them out from the chart and the policies.
+
 **`FL-R009 contested-field`.** Flux applies server-side and takes back every field in
 the manifest on each reconcile. If an autoscaler owns `spec.replicas`, or cert-manager
 injects a `caBundle`, the two write the field in turn for ever. The first install looks

@@ -157,7 +157,7 @@ A controller rendered from a Git source is built against a newer version of an A
 
 Default severity: **warning**
 
-A component applies objects that a fail-closed admission webhook intercepts, the webhook is installed by another component, and nothing makes the apply wait until the webhook answers. Between the webhook being registered and its pods serving, the API server rejects every matching request, so the apply fails and is retried a retryInterval later. dependsOn alone is not enough: a Kustomization without wait: true is Ready as soon as it is applied. Webhook rules, objectSelector and namespaceSelector are evaluated; a webhook with matchConditions, or one a controller registers at runtime, is not seen.
+A component applies objects that a fail-closed admission webhook intercepts, the webhook is installed by another component, and nothing makes the apply wait until the webhook answers. Between the webhook being registered and its pods serving, the API server rejects every matching request, so the apply fails and is retried a retryInterval later. dependsOn alone is not enough: a Kustomization without wait: true is Ready as soon as it is applied. Webhook rules, objectSelector and namespaceSelector are evaluated, and the webhooks Kyverno registers at runtime are worked out from its chart and its policies. Two cases are suggestions rather than warnings: a component applied before the webhook exists (its first apply is safe, a retry or the next interval is not), and a selector that needs a label which is not set in Git (controllers often set such labels at runtime). A webhook with matchConditions is not evaluated.
 
 ### FL-R009 contested-field
 
@@ -182,6 +182,12 @@ Two ExternalSecrets create the same Secret in the same namespace and both want t
 Default severity: **error**
 
 A cert-manager Certificate names an Issuer or ClusterIssuer that nothing in the repository creates. The Certificate is accepted and stays pending, the Secret it should produce never appears, and every pod that mounts it waits in ContainerCreating. A warning when some component could not be rendered and may create the issuer. Issuers of other API groups are not checked.
+
+### FL-R013 single-pod-gate
+
+Default severity: **warning**
+
+A fail-closed admission webhook that admits the applies of other components is served by exactly one pod. No ordering helps: whenever that pod restarts, is rescheduled or is upgraded, every matching apply in the cluster is rejected until it is back, and each rejected Kustomization waits a retryInterval. Webhooks that Kyverno registers at runtime are included, worked out from its chart and its policies. A warning when three or more other components go through the webhook, a suggestion below that. Workloads under an autoscaler, and DaemonSets, are taken to have more than one pod.
 
 ## Contracts
 

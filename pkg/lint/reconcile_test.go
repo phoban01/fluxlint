@@ -82,7 +82,9 @@ func TestAdmissionWindow(t *testing.T) {
 		{"unordered", "", "", "", "nothing orders the two"},
 		{"ordered but the webhook's component does not wait", "", dependsOn, "", "does not wait for health"},
 		{"ordered and waiting", "  wait: true\n", dependsOn, "", ""},
-		{"applied before the webhook exists", "  dependsOn:\n    - name: tenants\n", "", "", ""},
+		// safe once; a Kustomization reconciles again, so it is still said, quietly
+		{"applied before the webhook exists", "  dependsOn:\n    - name: tenants\n", "", "", "first apply is safe"},
+		{"a label that only exists at runtime", "", "", "    namespaceSelector: {matchLabels: {enrolled: \"true\"}}", "needs a label that is not set in Git"},
 		{"namespace not selected", "", "", "    namespaceSelector: {matchLabels: {tier: system}}", ""},
 		{"namespace selected", "", "", "    namespaceSelector: {matchLabels: {tier: tenant}}", "nothing orders the two"},
 		{"selected by the name label every namespace has", "", "", "    namespaceSelector:\n      matchExpressions:\n        - {key: kubernetes.io/metadata.name, operator: In, values: [team-a]}", "nothing orders the two"},
@@ -97,6 +99,8 @@ func TestAdmissionWindow(t *testing.T) {
 				t.Errorf("unexpected finding:\n%s", got)
 			case tc.want != "" && !strings.Contains(got, tc.want):
 				t.Errorf("want %q, got:\n%s", tc.want, got)
+			case strings.Contains(tc.want, "safe") && find(r, "FL-R008")[0].Severity != lint.Info, strings.Contains(tc.want, "not set in Git") && find(r, "FL-R008")[0].Severity != lint.Info:
+				t.Errorf("a window that may never open is a suggestion, got %s", find(r, "FL-R008")[0].Severity)
 			case tc.want != "" && !strings.Contains(got, "Namespace/team-a"):
 				t.Errorf("finding does not name the object:\n%s", got)
 			}
@@ -268,5 +272,129 @@ spec: {secretName: other-tls, dnsNames: [x.example.test], issuerRef: {name: pca,
 	if len(got) != 1 || !strings.Contains(messages(got), "Certificate/default/serving") ||
 		!strings.Contains(messages(got), "Issuer default/selfsigned") || !strings.Contains(messages(got), "default/serving-tls") {
 		t.Errorf("want only the Certificate whose namespaced Issuer is missing:\n%s", messages(got))
+	}
+}
+
+// Kyverno's webhooks are in no manifest: it registers them once it runs. What
+// it will register follows from its chart and from the policies.
+const kyvernoInstall = `apiVersion: v1
+kind: Namespace
+metadata: {name: kyverno}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kyverno-svc
+  namespace: kyverno
+  labels: {app.kubernetes.io/component: admission-controller, app.kubernetes.io/part-of: kyverno}
+spec:
+  selector: {app.kubernetes.io/component: admission-controller}
+  ports: [{port: 443}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: kyverno, namespace: kyverno}
+data:
+  webhooks: '{"namespaceSelector":{"matchExpressions":[{"key":"kubernetes.io/metadata.name","operator":"NotIn","values":["exempt"]}]}}'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: kyverno-admission-controller, namespace: kyverno}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/component: admission-controller}}
+  template:
+    metadata: {labels: {app.kubernetes.io/component: admission-controller}}
+    spec:
+      containers: [{name: kyverno, image: registry.example.test/kyverno:v1}]
+`
+
+const kyvernoLabelPolicy = `apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: copy-labels}
+spec:%s
+  rules:
+    - name: copy
+      match: {any: [{resources: {kinds: ["v1/ConfigMap", "example.test/*/*"]}}]}
+      mutate: {patchStrategicMerge: {metadata: {labels: {+(copied): "true"}}}}
+`
+
+func TestKyvernoAdmissionWindow(t *testing.T) {
+	repo := func(policySpec string) string {
+		dir := t.TempDir()
+		write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "kyverno", "kyverno", "")+"---\n"+
+			fmt.Sprintf(ksHeader, "policies", "policies", "  dependsOn:\n    - name: kyverno\n")+"---\n"+
+			fmt.Sprintf(ksHeader, "app", "app", ""))
+		write(t, dir, "kyverno/all.yaml", kyvernoInstall)
+		write(t, dir, "policies/all.yaml", fmt.Sprintf(kyvernoLabelPolicy, policySpec))
+		write(t, dir, "app/all.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: settings, namespace: default}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: in-kube-system, namespace: kube-system}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: exempt}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: left-alone, namespace: exempt}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: not-matched, namespace: default}
+`)
+		return dir
+	}
+	cfg := func() *config.Config {
+		c := config.Default()
+		c.Externals.CRDGroups = append(c.Externals.CRDGroups, "kyverno.io")
+		c.Rules.Off = map[string]bool{"FL-V007": true} // the CLI is not needed here
+		return c
+	}
+	got := find(analyseDir(t, repo(""), cfg()), "FL-R008")
+	text := messages(got)
+	for _, want := range []string{
+		"ConfigMap/default/settings", "mutate.kyverno.svc-fail", "ClusterPolicy/copy-labels", // resources its policies match
+		"ClusterPolicy/copy-labels is admitted by fail-closed webhook validate-policy.kyverno.svc", "does not wait for health", // and its own policy kinds
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("FL-R008 lacks %q:\n%s", want, text)
+		}
+	}
+	for _, not := range []string{"in-kube-system", "left-alone", "not-matched"} {
+		if strings.Contains(text, not) {
+			t.Errorf("FL-R008 must not mention %q:\n%s", not, text)
+		}
+	}
+
+	single := messages(find(analyseDir(t, repo(""), cfg()), "FL-R013"))
+	if !strings.Contains(single, "Deployment/kyverno/kyverno-admission-controller") || !strings.Contains(single, "flux-system/app") {
+		t.Errorf("one Kyverno pod stands in front of other components:\n%s", single)
+	}
+
+	// a policy that fails open registers a webhook that rejects nothing
+	text = messages(find(analyseDir(t, repo("\n  failurePolicy: Ignore"), cfg()), "FL-R008"))
+	if strings.Contains(text, "mutate.kyverno.svc-fail") || !strings.Contains(text, "validate-policy.kyverno.svc") {
+		t.Errorf("failurePolicy: Ignore:\n%s", text)
+	}
+}
+
+func TestSinglePodGate(t *testing.T) {
+	one := windowRepo(t, "", "", "")
+	if got := find(analyseDir(t, one, nil), "FL-R013"); len(got) != 1 || !strings.Contains(messages(got), "Deployment/guard-system/guard") || !strings.Contains(messages(got), "flux-system/tenants") {
+		t.Errorf("one pod behind a webhook that admits another component's applies:\n%s", messages(got))
+	}
+	two := windowRepo(t, "", "", "")
+	write(t, two, "guard/all.yaml", strings.Replace(fmt.Sprintf(guard, ""), "spec:\n  selector: {matchLabels: {app: guard}}", "spec:\n  replicas: 2\n  selector: {matchLabels: {app: guard}}", 1))
+	if got := find(analyseDir(t, two, nil), "FL-R013"); len(got) != 0 {
+		t.Errorf("two replicas:\n%s", messages(got))
+	}
+	// a webhook that only guards its own component's objects is its own business
+	alone := windowRepo(t, "", "", "    namespaceSelector: {matchLabels: {tier: system}}")
+	if got := find(analyseDir(t, alone, nil), "FL-R013"); len(got) != 0 {
+		t.Errorf("nothing else goes through it:\n%s", messages(got))
 	}
 }

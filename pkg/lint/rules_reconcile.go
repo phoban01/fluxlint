@@ -56,15 +56,62 @@ type gate struct {
 	owner  *model.Component
 	config model.Object
 	hook   any
+	// kinds replaces hook.rules for a webhook that is registered at runtime
+	// and described by the kinds it matches rather than by resources.
+	kinds []kindPattern
+	// why says where a synthesised gate comes from.
+	why string
 }
 
-// intercepts reports whether the API server calls the webhook when o is
-// applied. It answers no whenever it cannot tell.
-func (g gate) intercepts(o model.Object, resource string, namespaces map[string]model.Object) bool {
+type verdict int
+
+const (
+	passes     verdict = iota // the API server does not call the webhook
+	maybe                     // it does if a label that is not in Git is set at runtime
+	intercepts                // it does
+)
+
+// selects evaluates a label selector against labels known from Git. A
+// requirement on a key that Git does not set is not a "no": HNC, Kyverno and
+// namespace labellers set such labels at runtime.
+func selects(sel any, labels map[string]string) verdict {
+	if selectorMatches(sel, labels) {
+		return intercepts
+	}
+	known := map[string]any{"matchLabels": map[string]any{}}
+	var exprs []any
+	if m, ok := model.Get(sel, "matchLabels").(map[string]any); ok {
+		kept := map[string]any{}
+		for k, v := range m {
+			if _, set := labels[k]; set {
+				kept[k] = v
+			}
+		}
+		known["matchLabels"] = kept
+	}
+	for _, e := range model.List(sel, "matchExpressions") {
+		_, set := labels[model.Str(e, "key")]
+		if op := model.Str(e, "operator"); !set && (op == "In" || op == "Exists") {
+			continue // unknowable from Git
+		}
+		exprs = append(exprs, e)
+	}
+	known["matchExpressions"] = exprs
+	if selectorMatches(known, labels) {
+		return maybe
+	}
+	return passes
+}
+
+// admits reports whether the API server calls the webhook when o is applied.
+func (g gate) admits(o model.Object, resource string, namespaces map[string]model.Object) verdict {
 	if len(model.List(g.hook, "matchConditions")) > 0 {
-		return false // CEL over the request: not evaluated
+		return passes // CEL over the request: not evaluated
 	}
 	matched := false
+	for _, k := range g.kinds {
+		matched = matched || k.matches(o)
+	}
 	for _, rule := range model.List(g.hook, "rules") {
 		if !anyOf(model.List(rule, "operations"), "*", "CREATE", "UPDATE") {
 			continue
@@ -85,23 +132,29 @@ func (g gate) intercepts(o model.Object, resource string, namespaces map[string]
 		matched = true
 	}
 	if !matched {
-		return false
+		return passes
 	}
-	if sel := model.Get(g.hook, "objectSelector"); sel != nil && !selectorMatches(sel, labelsOf(o)) {
-		return false
+	out := intercepts
+	if sel := model.Get(g.hook, "objectSelector"); sel != nil {
+		if out = min(out, selects(sel, labelsOf(o))); out == passes {
+			return passes
+		}
 	}
 	if sel, ok := model.Get(g.hook, "namespaceSelector").(map[string]any); ok && len(sel) > 0 {
 		// a Namespace is selected by its own labels, anything namespaced by
 		// the labels of its namespace, anything else always
 		switch {
 		case o.Kind() == "Namespace" && o.Group() == "":
-			return selectorMatches(sel, withNameLabel(o))
+			out = min(out, selects(sel, withNameLabel(o)))
 		case o.Namespace() != "":
 			ns, known := namespaces[o.Namespace()]
-			return known && selectorMatches(sel, withNameLabel(ns))
+			if !known {
+				ns = model.Object{"metadata": map[string]any{"name": o.Namespace()}}
+			}
+			out = min(out, selects(sel, withNameLabel(ns)))
 		}
 	}
-	return true
+	return out
 }
 
 // withNameLabel adds the label the API server sets on every namespace.
@@ -130,10 +183,11 @@ func (r *run) admissionWindows(declared *graph.Graph) {
 				if model.Str(wh, "failurePolicy") == "Ignore" || model.Get(wh, "clientConfig", "service") == nil {
 					continue
 				}
-				gates = append(gates, gate{c, o, wh})
+				gates = append(gates, gate{owner: c, config: o, hook: wh})
 			}
 		}
 	}
+	gates = append(gates, r.kyvernoGates()...)
 	if len(gates) == 0 {
 		return
 	}
@@ -146,9 +200,13 @@ func (r *run) admissionWindows(declared *graph.Graph) {
 		}
 	}
 
+	// which other components each gate stands in front of
+	guarded := map[string]map[string]bool{}
+	gateOf := map[string]gate{}
 	type hit struct {
 		first model.Object
 		count int
+		sure  bool
 	}
 	for _, c := range r.ix.Tree.Components {
 		hits := map[*model.Component]*hit{}
@@ -161,14 +219,29 @@ func (r *run) admissionWindows(declared *graph.Graph) {
 			for _, g := range gates {
 				// within one apply, or an apply made by the webhook's own
 				// component, the order is Flux's to get right
-				if c.Within(g.owner) || g.owner.Within(c) || !g.intercepts(o, resource, namespaces) {
+				if c.Within(g.owner) || g.owner.Within(c) {
 					continue
 				}
-				if hits[g.owner] == nil {
-					hits[g.owner] = &hit{first: o}
-					hooks[g.owner] = g
+				v := g.admits(o, resource, namespaces)
+				if v == passes {
+					continue
 				}
-				hits[g.owner].count++
+				if v == intercepts {
+					key := g.config.String() + " " + model.Str(g.hook, "name")
+					if guarded[key] == nil {
+						guarded[key], gateOf[key] = map[string]bool{}, g
+					}
+					guarded[key][c.String()] = true
+				}
+				h := hits[g.owner]
+				if h == nil || (v == intercepts && !h.sure) {
+					h = &hit{first: o, sure: v == intercepts}
+					if old := hits[g.owner]; old != nil {
+						h.count = old.count
+					}
+					hits[g.owner], hooks[g.owner] = h, g
+				}
+				h.count++
 				break
 			}
 		}
@@ -179,9 +252,6 @@ func (r *run) admissionWindows(declared *graph.Graph) {
 		sort.Slice(owners, func(i, j int) bool { return owners[i].String() < owners[j].String() })
 		for _, p := range owners {
 			h, g := hits[p], hooks[p]
-			if declared.Reachable(readyOf(c), startOf(p), nil) {
-				continue // applied before the webhook is registered
-			}
 			penalty := c.RetryInterval
 			if !c.HasRetryInterval {
 				penalty = c.Interval
@@ -191,21 +261,111 @@ func (r *run) admissionWindows(declared *graph.Graph) {
 				what = h.first.String()
 			}
 			hook := fmt.Sprintf("webhook %s of %s", model.Str(g.hook, "name"), g.config)
-			switch after := declared.Reachable(readyOf(p), startOf(c), nil); {
+			detail := []string{fmt.Sprintf("an apply rejected in that window is retried after %v", penalty)}
+			if g.why != "" {
+				detail = append(detail, g.why)
+			}
+			after := declared.Reachable(readyOf(p), startOf(c), nil)
+			sev, msg := Warning, ""
+			switch {
 			case after && (p.BlocksOnHealth() || p.IsHelmRelease()):
 				continue
+			case declared.Reachable(readyOf(c), startOf(p), nil):
+				// the first apply is safe. Later ones are not: a Kustomization
+				// reconciles again on every retry, interval and new revision,
+				// and the webhook's pods also restart on upgrades
+				sev = Info
+				msg = fmt.Sprintf("%s is admitted by fail-closed %s. %s is applied before %s, so its first apply is safe; one that comes while the webhook's pods start (a retry, the next interval, an upgrade of %s) is rejected",
+					what, hook, c, p, p)
 			case after:
-				r.report("FL-R008", c, h.first, fmt.Sprintf("%s is admitted by fail-closed %s; %s is ordered after %s, but %s does not wait for health, so it is Ready once applied, not once the webhook answers",
-					what, hook, c, p, p),
-					fmt.Sprintf("set wait: true (or healthChecks for the webhook Deployment) on %s", waiter(c, p)),
-					fmt.Sprintf("an apply rejected in that window is retried after %v", penalty))
+				msg = fmt.Sprintf("%s is admitted by fail-closed %s; %s is ordered after %s, but %s does not wait for health, so it is Ready once applied, not once the webhook answers",
+					what, hook, c, p, p)
+				detail = append([]string{fmt.Sprintf("set wait: true (or healthChecks for the webhook Deployment) on %s", waiter(c, p))}, detail...)
 			default:
-				r.report("FL-R008", c, h.first, fmt.Sprintf("%s is admitted by fail-closed %s, installed by %s, and nothing orders the two: an apply that lands while the webhook starts is rejected",
-					what, hook, p),
-					orderAfter(c, p),
-					fmt.Sprintf("an apply rejected in that window is retried after %v", penalty))
+				msg = fmt.Sprintf("%s is admitted by fail-closed %s, installed by %s, and nothing orders the two: an apply that lands while the webhook starts is rejected",
+					what, hook, p)
+				detail = append([]string{orderAfter(c, p)}, detail...)
+			}
+			if !h.sure {
+				sev = Info
+				msg += " (if the webhook's selector matches: it needs a label that is not set in Git)"
+			}
+			r.reportAs(sev, "FL-R008", c, h.first, msg, detail...)
+		}
+	}
+	r.singlePodGates(guarded, gateOf)
+}
+
+// singlePodGates reports a fail-closed webhook that other components' applies
+// go through and that one pod serves. Ordering cannot help here: whenever
+// that pod restarts, is rescheduled or is upgraded, every matching apply in
+// the cluster is rejected until it is back.
+func (r *run) singlePodGates(guarded map[string]map[string]bool, gateOf map[string]gate) {
+	scaled := map[string]bool{} // workloads an autoscaler manages
+	var workloads []workload
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			if wl, ok := podTemplate(o); ok {
+				workloads = append(workloads, wl)
+			}
+			if o.Kind() == "HorizontalPodAutoscaler" || o.Kind() == "ScaledObject" {
+				scaled[nn(o.Namespace(), model.Str(o, "spec", "scaleTargetRef", "name"))] = true
 			}
 		}
+	}
+	keys := sortedKeys(guarded)
+	seen := map[string]bool{}
+	for _, key := range keys {
+		g := gateOf[key]
+		svcNS, svcName := model.Str(g.hook, "clientConfig", "service", "namespace"), model.Str(g.hook, "clientConfig", "service", "name")
+		var svc model.Object
+		for _, c := range r.ix.Tree.Components {
+			for _, o := range c.Objects {
+				if o.Group() == "" && o.Kind() == "Service" && o.Namespace() == svcNS && o.Name() == svcName {
+					svc = o
+				}
+			}
+		}
+		sel, ok := model.Get(svc, "spec", "selector").(map[string]any)
+		if svc == nil || !ok || len(sel) == 0 {
+			continue
+		}
+		pods, backend := 0, model.Object(nil)
+		for _, wl := range workloads {
+			if wl.Object.Namespace() != svcNS || !selectorMatches(map[string]any{"matchLabels": sel}, wl.Labels) {
+				continue
+			}
+			backend = wl.Object
+			switch {
+			case wl.Object.Kind() == "DaemonSet", scaled[nn(svcNS, wl.Object.Name())]:
+				pods += 2
+			case wl.Replicas == nil:
+				pods++
+			default:
+				pods += *wl.Replicas
+			}
+		}
+		if pods != 1 || seen[backend.String()] {
+			continue
+		}
+		seen[backend.String()] = true
+		others := sortedKeys(guarded[key])
+		list := strings.Join(others, ", ")
+		if len(others) > 5 {
+			list = strings.Join(others[:5], ", ") + fmt.Sprintf(" and %d more", len(others)-5)
+		}
+		detail := []string{"run at least two replicas with a PodDisruptionBudget, or let the webhook fail open for what it need not guard"}
+		if g.why != "" {
+			detail = append(detail, g.why)
+		}
+		// the harm grows with what goes through the gate: one dependent is the
+		// ordinary case of an operator and its custom resources
+		sev := Info
+		if len(others) >= 3 {
+			sev = Warning
+		}
+		r.reportAs(sev, "FL-R013", g.owner, backend, fmt.Sprintf("is the only pod behind fail-closed webhook %s, which admits the applies of %d other component(s): while it restarts, every one of them is rejected (%s)",
+			model.Str(g.hook, "name"), len(others), list), detail...)
 	}
 }
 
