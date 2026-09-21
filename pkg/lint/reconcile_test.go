@@ -398,3 +398,35 @@ func TestSinglePodGate(t *testing.T) {
 		t.Errorf("nothing else goes through it:\n%s", messages(got))
 	}
 }
+
+func TestSourceCredentials(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "sources", "sources", ""))
+	write(t, dir, "sources/all.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: private, namespace: flux-system}
+spec: {interval: 10m, url: "https://git.example.test/private.git", ref: {tag: v1}, secretRef: {name: git-token}}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: also-private, namespace: flux-system}
+spec: {interval: 10m, url: "https://git.example.test/other.git", ref: {tag: v1}, secretRef: {name: fetched-token}}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: fetched-token, namespace: flux-system}
+spec:
+  secretStoreRef: {name: vault, kind: ClusterSecretStore}
+  dataFrom: [{extract: {key: git}}]
+`)
+	cfg := config.Default()
+	cfg.Externals.CRDGroups = append(cfg.Externals.CRDGroups, "external-secrets.io")
+	got := find(analyseDir(t, dir, cfg), "FL-R014")
+	if len(got) != 1 || !strings.Contains(messages(got), "GitRepository/flux-system/private") || !strings.Contains(messages(got), "flux-system/git-token") {
+		t.Errorf("want only the source whose Secret has no producer:\n%s", messages(got))
+	}
+	cfg.Externals.Secrets = append(cfg.Externals.Secrets, config.ExternalSecretRef{Namespace: "flux-system", Name: "git-token"})
+	if got := find(analyseDir(t, dir, cfg), "FL-R014"); len(got) != 0 {
+		t.Errorf("declared under externals.secrets:\n%s", messages(got))
+	}
+}

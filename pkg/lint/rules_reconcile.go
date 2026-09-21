@@ -622,3 +622,35 @@ func (r *run) certificateIssuers() {
 		}
 	}
 }
+
+// sourceCredentials reports a Flux source whose credentials nothing creates.
+// The source never becomes Ready, and everything that reads from it waits.
+func (r *run) sourceCredentials() {
+	opaque := 0
+	for _, c := range r.ix.Tree.Components {
+		if c.Opaque != "" {
+			opaque++
+		}
+	}
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			// the repository's own source is set up by `flux bootstrap`, which
+			// creates its Secret in the cluster and never in Git
+			if !o.IsSource() || r.ix.isRepoSource(model.Ref{Kind: o.Kind(), Namespace: o.Namespace(), Name: o.Name()}) {
+				continue
+			}
+			for _, field := range []string{"secretRef", "certSecretRef", "proxySecretRef"} {
+				name := model.Str(o, "spec", field, "name")
+				if name == "" || len(r.ix.Wiring.secrets[nn(o.Namespace(), name)]) > 0 {
+					continue
+				}
+				msg := fmt.Sprintf("spec.%s names Secret %s, which nothing creates: the source never becomes Ready, and neither does anything that reads from it", field, nn(o.Namespace(), name))
+				if opaque > 0 {
+					r.reportAs(Warning, "FL-R014", c, o, msg, fmt.Sprintf("low confidence: %d component(s) are not rendered and may create it", opaque))
+					continue
+				}
+				r.report("FL-R014", c, o, msg, "if it is created out of band, declare it under externals.secrets")
+			}
+		}
+	}
+}

@@ -189,6 +189,12 @@ Default severity: **warning**
 
 A fail-closed admission webhook that admits the applies of other components is served by exactly one pod. No ordering helps: whenever that pod restarts, is rescheduled or is upgraded, every matching apply in the cluster is rejected until it is back, and each rejected Kustomization waits a retryInterval. Webhooks that Kyverno registers at runtime are included, worked out from its chart and its policies. A warning when three or more other components go through the webhook, a suggestion below that. Workloads under an autoscaler, and DaemonSets, are taken to have more than one pod.
 
+### FL-R014 source-credentials
+
+Default severity: **error**
+
+A GitRepository, OCIRepository, HelmRepository or Bucket names a Secret (secretRef, certSecretRef, proxySecretRef) that nothing creates: not a manifest, an ExternalSecret, a ClusterExternalSecret selecting the namespace, nor externals.secrets. The source never becomes Ready and everything that reads from it waits. The repository's own source is left out: flux bootstrap creates its Secret in the cluster. A warning when some component could not be rendered and may create it.
+
 ## Contracts
 
 What a controller or chart declares it cannot run without.
