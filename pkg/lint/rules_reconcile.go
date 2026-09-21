@@ -219,7 +219,7 @@ func (r *run) admissionWindows(declared *graph.Graph) {
 			for _, g := range gates {
 				// within one apply, or an apply made by the webhook's own
 				// component, the order is Flux's to get right
-				if c.Within(g.owner) || g.owner.Within(c) {
+				if c.Synthetic || g.owner.Synthetic || c.Within(g.owner) || g.owner.Within(c) {
 					continue
 				}
 				v := g.admits(o, resource, namespaces)

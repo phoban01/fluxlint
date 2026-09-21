@@ -26,6 +26,15 @@ func clusterIndexes(t *model.Tree, cfg *config.Config) []*Index {
 	for name := range byCluster {
 		names = append(names, name)
 	}
+	// what Cluster API delivers to the other clusters, read from this one
+	if len(byCluster) > 1 {
+		view := *t
+		view.Components = byCluster[""]
+		local := buildIndex(&view, cfg, t.Components)
+		for cluster, comps := range resourceSetComponents(byCluster, local.Wiring) {
+			byCluster[cluster] = append(byCluster[cluster], comps...)
+		}
+	}
 	sort.Strings(names) // "" sorts first
 	out := make([]*Index, 0, len(names))
 	for _, name := range names {
@@ -52,7 +61,12 @@ func mergeIndexes(t *model.Tree, cfg *config.Config, parts []*Index) *Index {
 		for id, owners := range p.Owner {
 			g.Owner[cluster+"\x00"+id] = owners
 		}
-		g.Needs = append(g.Needs, p.Needs...)
+		for _, n := range p.Needs {
+			// Flux does not apply or order what a ClusterResourceSet delivers
+			if !n.Consumer.Synthetic && !n.Provider.Synthetic {
+				g.Needs = append(g.Needs, n)
+			}
+		}
 		g.MissingNamespaces = append(g.MissingNamespaces, p.MissingNamespaces...)
 		g.MissingCRDs = append(g.MissingCRDs, p.MissingCRDs...)
 		g.MissingSources = append(g.MissingSources, p.MissingSources...)

@@ -110,6 +110,10 @@ type Component struct {
 	// (spec.kubeConfig.secretRef) that points at another one. Objects applied
 	// to different clusters never meet, whatever their names.
 	Cluster string
+	// Synthetic marks a component fluxlint made up to hold objects that
+	// something other than Flux delivers (a ClusterResourceSet). It has no
+	// place in the ordering of Flux objects.
+	Synthetic bool
 	// ImageProblems maps a container image to why it cannot be pulled, for
 	// images the registry was asked about.
 	ImageProblems map[string]string

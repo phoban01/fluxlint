@@ -47,8 +47,9 @@ key. Pin a version in CI; `install.sh` verifies the checksum.
   everything you render, on create and, with `--base`, on update
 * asks the registry whether every image tag exists, for the platform your nodes run
 * compares its verdict with a real cluster's, and reports every failure it did not predict
-* understands `spec.kubeConfig`: a management cluster that applies to workload clusters
-  is analysed as several clusters with one ordering
+* understands `spec.kubeConfig` and Cluster API ClusterResourceSets: a management cluster
+  that applies to workload clusters, and what Cluster API delivers to them,
+  are analysed as several clusters with one ordering
 * reports to the terminal, JSON, GitLab Code Quality, SARIF and GitHub annotations
 
 ## Install

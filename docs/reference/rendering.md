@@ -115,8 +115,24 @@ names each target cluster after its kubeconfig Secret and keeps them apart:
 A child that a remote Kustomization creates stays in that cluster. The JSON report names
 the cluster of every component that is not local.
 
-What a workload cluster gets from elsewhere (its cloud provider's Secrets, what Cluster
-API puts there) is not in Git. Declare it under `externals`, as for the local cluster.
+### What Cluster API delivers
+
+A `ClusterResourceSet` names Secrets or ConfigMaps whose values are manifests, and
+Cluster API applies those manifests to the workload clusters of its namespace that its
+`clusterSelector` matches. fluxlint follows them. The manifests can be in a Secret or
+ConfigMap in Git, or in the `target.template` of the ExternalSecret or
+ClusterExternalSecret that produces the Secret, where template actions such as
+`{{ .token }}` stand for values that are not known but leave the objects and their keys
+readable. What is delivered counts as present in that cluster: a Secret with its keys,
+a ClusterIssuer, a namespace.
+
+A workload cluster is matched to its Cluster API `Cluster` by the usual name of its
+kubeconfig Secret, `<cluster>-kubeconfig`. When the `Cluster` object is in Git its labels
+decide whether the selector matches; when something else creates it, being in the
+ClusterResourceSet'"'"'s namespace is enough.
+
+Deliveries are not Flux objects, so they take no part in ordering or timing. What
+reaches a workload cluster some other way is not in Git: declare it under `externals`.
 
 ## Limits
 

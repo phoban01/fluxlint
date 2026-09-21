@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/phoban01/fluxlint/pkg/config"
 	"github.com/phoban01/fluxlint/pkg/lint"
 )
 
@@ -133,5 +134,102 @@ func TestMissingPullSecretIsAWarning(t *testing.T) {
 	got := find(analyseDir(t, dir, nil), "FL-R002")
 	if len(got) != 1 || got[0].Severity != lint.Warning || !strings.Contains(messages(got), "default/not-there") {
 		t.Errorf("got:\n%s", messages(got))
+	}
+}
+
+// Cluster API delivers what a ClusterResourceSet names to the workload
+// clusters of its namespace. Here the manifests sit in the template of the
+// ClusterExternalSecret that produces the resource Secret.
+func resourceSetRepo(t *testing.T, resourceSet string) string {
+	t.Helper()
+	dir := t.TempDir()
+	remote := "  kubeConfig:\n    secretRef: {name: spoke-kubeconfig}\n"
+	// the kubeconfig Secret, and so the Cluster, live where the Kustomization does
+	spoke := fmt.Sprintf(ksHeader, "spoke-app", "spoke-app", remote)
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "hub", "hub", "")+"---\n"+spoke)
+	write(t, dir, "hub/all.yaml", `apiVersion: v1
+kind: Namespace
+metadata: {name: fleet}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata: {name: agent-token}
+spec:
+  externalSecretName: agent-token
+  namespaceSelector: {matchLabels: {set-at-runtime: "true"}}
+  externalSecretSpec:
+    secretStoreRef: {name: vault, kind: ClusterSecretStore}
+    data: [{secretKey: token, remoteRef: {key: agent}}]
+    target:
+      name: agent-token
+      template:
+        type: addons.cluster.x-k8s.io/resource-set
+        data:
+          token.yaml: |-
+            apiVersion: v1
+            kind: Secret
+            metadata: {name: agent-token, namespace: default}
+            data:
+              token: {{ .token | b64enc }}
+          issuer.yaml: |-
+            apiVersion: cert-manager.io/v1
+            kind: ClusterIssuer
+            metadata: {name: vault-issuer}
+            spec: {vault: {path: "pki/sign/{{ .token }}"}}
+`+resourceSet)
+	write(t, dir, "spoke-app/all.yaml", deployment("agent", "default", 1,
+		"containers:\n  - name: a\n    image: registry.example.test/a:v1\n    env:\n      - name: TOKEN\n        valueFrom: {secretKeyRef: {name: agent-token, key: token}}\n      - name: OTHER\n        valueFrom: {secretKeyRef: {name: agent-token, key: not-delivered}}\n")+`---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: agent, namespace: default}
+spec: {secretName: agent-tls, dnsNames: [agent.example.test], issuerRef: {name: vault-issuer, kind: ClusterIssuer}}
+`)
+	return dir
+}
+
+const deliverToFleet = `---
+apiVersion: addons.cluster.x-k8s.io/v1beta2
+kind: ClusterResourceSet
+metadata: {name: agent-token, namespace: flux-system}
+spec:
+  clusterSelector: {matchLabels: {agents: "true"}}
+  resources: [{kind: Secret, name: agent-token}]
+`
+
+func TestClusterResourceSetDelivers(t *testing.T) {
+	cfg := func() *config.Config {
+		c := config.Default()
+		c.Externals.CRDGroups = append(c.Externals.CRDGroups, "external-secrets.io", "cert-manager.io", "addons.cluster.x-k8s.io", "cluster.x-k8s.io")
+		return c
+	}
+	// without the ClusterResourceSet nothing reaches the spoke
+	none := analyseDir(t, resourceSetRepo(t, ""), cfg())
+	if got := messages(find(none, "FL-R001")); !strings.Contains(got, "default/agent-token, which nothing creates") {
+		t.Errorf("premise: the spoke has no such Secret:\n%s", got)
+	}
+	if len(find(none, "FL-R012")) != 1 {
+		t.Errorf("premise: the spoke has no such issuer:\n%s", messages(find(none, "FL-R012")))
+	}
+
+	r := analyseDir(t, resourceSetRepo(t, deliverToFleet), cfg())
+	if got := find(r, "FL-R012"); len(got) != 0 {
+		t.Errorf("the ClusterIssuer is delivered by the ClusterResourceSet:\n%s", messages(got))
+	}
+	// the Secret arrives, with the keys its manifest has and no others
+	got := find(r, "FL-R001")
+	if len(got) != 1 || !strings.Contains(messages(got), `"not-delivered"`) || strings.Contains(messages(got), "which nothing creates") {
+		t.Errorf("want only the key the delivered Secret lacks:\n%s", messages(got))
+	}
+	// what Cluster API delivers is not a Flux object: it is not ordered
+	for _, rule := range []string{"FL-T006", "FL-R008", "FL-G002"} {
+		if msg := messages(find(r, rule)); strings.Contains(msg, "ClusterResourceSet:") {
+			t.Errorf("%s must not treat a delivery as a Flux component:\n%s", rule, msg)
+		}
+	}
+
+	// a Cluster in Git that the selector does not match gets nothing
+	unmatched := deliverToFleet + "---\napiVersion: cluster.x-k8s.io/v1beta1\nkind: Cluster\nmetadata: {name: spoke, namespace: flux-system, labels: {agents: \"false\"}}\n"
+	if got := find(analyseDir(t, resourceSetRepo(t, unmatched), cfg()), "FL-R012"); len(got) != 1 {
+		t.Errorf("the selector does not match the Cluster in Git, so nothing is delivered:\n%s", messages(got))
 	}
 }
