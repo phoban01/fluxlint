@@ -280,6 +280,7 @@ func (r *renderer) newComponent(o model.Object, parent *model.Component) *model.
 		Namespace: o.Namespace(),
 		Name:      o.Name(),
 		Parent:    parent,
+		Cluster:   targetCluster(o, parent),
 		Spec:      o,
 		Path:      model.Str(o, "spec", "path"),
 		Wait:      model.Bool(o, "spec", "wait"),
@@ -329,6 +330,7 @@ func (r *renderer) newHelmComponent(o model.Object, parent *model.Component) *mo
 		Namespace: o.Namespace(),
 		Name:      o.Name(),
 		Parent:    parent,
+		Cluster:   targetCluster(o, parent),
 		Spec:      o,
 		External:  true, // a chart is always fetched
 		Prune:     true,
@@ -425,4 +427,21 @@ func (r *renderer) external(sf model.SubstituteRef) *config.ExternalSubstitution
 		}
 	}
 	return nil
+}
+
+// targetCluster is where Flux applies what o reconciles. A remote target is
+// named by its kubeconfig Secret. A child created in a remote cluster stays
+// there: nothing in that cluster's Git view says otherwise.
+func targetCluster(o model.Object, parent *model.Component) string {
+	if name := model.Str(o, "spec", "kubeConfig", "secretRef", "name"); name != "" {
+		cluster := o.Namespace() + "/" + name
+		if key := model.Str(o, "spec", "kubeConfig", "secretRef", "key"); key != "" {
+			cluster += "#" + key
+		}
+		return cluster
+	}
+	if parent != nil {
+		return parent.Cluster
+	}
+	return ""
 }

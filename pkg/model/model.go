@@ -105,6 +105,11 @@ type Component struct {
 	CreatesNamespace string   // install.createNamespace target: created if absent, not owned
 	RenderNotes      []string // parts of the spec the renderer does not model yet
 	Unstable         []string // IDs of objects that render differently each time
+	// Cluster is where the component's objects are applied: "" for the
+	// cluster Flux runs in, otherwise the kubeconfig Secret
+	// (spec.kubeConfig.secretRef) that points at another one. Objects applied
+	// to different clusters never meet, whatever their names.
+	Cluster string
 	// ImageProblems maps a container image to why it cannot be pulled, for
 	// images the registry was asked about.
 	ImageProblems map[string]string

@@ -13,9 +13,13 @@ import (
 
 // policySet compiles the ValidatingAdmissionPolicies the tree installs.
 func (r *run) policySet() (*policy.Set, map[string]string) {
+	return policySetOf(r.ix.Tree.Components)
+}
+
+func policySetOf(components []*model.Component) (*policy.Set, map[string]string) {
 	var all []map[string]any
 	plural := map[string]string{}
-	for _, c := range r.ix.Tree.Components {
+	for _, c := range components {
 		for _, o := range c.Objects {
 			all = append(all, o)
 			if o.Kind() == "CustomResourceDefinition" {
@@ -84,8 +88,17 @@ func (r *run) admissionPolicies() {
 // what the base rendered, which is where oldObject rules (immutability, state
 // transitions) speak. The policies are the head's.
 func (r *run) updatePolicies(before, after map[string]owned) {
-	set, plural := r.policySet()
-	if set.Empty() {
+	// a policy admits objects of its own cluster only
+	sets := map[string]*policy.Set{}
+	plurals := map[string]map[string]string{}
+	byCluster := map[string][]*model.Component{}
+	for _, c := range r.ix.Tree.Components {
+		byCluster[c.Cluster] = append(byCluster[c.Cluster], c)
+	}
+	for cluster, comps := range byCluster {
+		sets[cluster], plurals[cluster] = policySetOf(comps)
+	}
+	if len(sets) == 0 {
 		return
 	}
 	ids := make([]string, 0, len(after))
@@ -97,6 +110,10 @@ func (r *run) updatePolicies(before, after map[string]owned) {
 		a := after[id]
 		b, existed := before[id]
 		if !existed || reflect.DeepEqual(normalise(map[string]any(b.o)), normalise(map[string]any(a.o))) {
+			continue
+		}
+		set, plural := sets[a.c.Cluster], plurals[a.c.Cluster]
+		if set == nil || set.Empty() {
 			continue
 		}
 		req := policy.Request{Object: a.o, Old: b.o, Resource: resourceOf(a.o, plural), User: applier(a.c)}

@@ -60,7 +60,7 @@ func (r *run) graphRules() {
 		}
 		var obj model.Object
 		for _, o := range owners[0].Objects {
-			if o.ID() == id {
+			if strings.HasSuffix(id, "\x00"+o.ID()) || o.ID() == id {
 				obj = o
 			}
 		}

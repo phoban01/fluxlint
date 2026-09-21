@@ -166,20 +166,28 @@ type Result struct {
 
 // Run executes every rule.
 func Run(t *model.Tree, cfg *config.Config) *Result {
-	r := &run{ix: BuildIndex(t, cfg), cfg: cfg, files: map[string][]string{}}
+	clusters := clusterIndexes(t, cfg)
+	whole := mergeIndexes(t, cfg, clusters)
+	r := &run{ix: whole, cfg: cfg, files: map[string][]string{}}
 	r.graphRules()
 	r.substitutionRules()
-	r.runtimeRules()
-	r.admissionWindows(declaredGraph(r.ix))
-	r.contestedFields()
+	declared := declaredGraph(whole)
+	// everything that matches objects by name, within one cluster at a time
+	for _, ix := range clusters {
+		r.ix = ix
+		r.runtimeRules()
+		r.admissionWindows(declared)
+		r.contestedFields()
+		r.secretOwners()
+		r.certificateIssuers()
+		r.sourceCredentials()
+		r.valuesReferences()
+		r.admissionRules()
+		r.controllerRules()
+	}
+	r.ix = whole
 	r.unstableRenders()
 	r.imageRules()
-	r.secretOwners()
-	r.certificateIssuers()
-	r.sourceCredentials()
-	r.valuesReferences()
-	r.admissionRules()
-	r.controllerRules()
 	r.assertionRules()
 	timing := r.timingRules()
 	r.clusterRules()

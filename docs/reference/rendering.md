@@ -83,6 +83,26 @@ Secrets. Test and delete hooks are left out.
 Each release is a node in the graph, with helm-controller's timeout and install
 retries. A chart that cannot render with your values is reported as `FL-G008`.
 
+## More than one cluster
+
+A Kustomization or HelmRelease with `spec.kubeConfig` applies to another cluster: the
+usual way a management cluster installs add-ons into the clusters it creates. fluxlint
+names each target cluster after its kubeconfig Secret and keeps them apart:
+
+* objects in different clusters never meet. cert-manager installed in the management
+  cluster and again in a workload cluster is two installations, not one object with two
+  owners. A Secret in one cluster does not satisfy a pod in another, and a CRD, a
+  namespace, a webhook or an admission policy only counts in the cluster it is in.
+* ordering spans all of them. `dependsOn`, `wait` and timeouts live in the cluster Flux
+  runs in, so the deadlock check and the timing analysis use the whole graph.
+* sources are read where Flux runs, whatever cluster the result is applied to.
+
+A child that a remote Kustomization creates stays in that cluster. The JSON report names
+the cluster of every component that is not local.
+
+What a workload cluster gets from elsewhere (its cloud provider's Secrets, what Cluster
+API puts there) is not in Git. Declare it under `externals`, as for the local cluster.
+
 ## Limits
 
 * `Bucket` sources are not fetched.

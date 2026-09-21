@@ -47,8 +47,10 @@ func ownership(t *model.Tree) map[string]owned {
 	out := map[string]owned{}
 	for _, c := range t.Components {
 		for _, o := range c.Objects {
-			if _, dup := out[o.ID()]; !dup {
-				out[o.ID()] = owned{c, o}
+			// the same name in another cluster is another object
+			id := c.Cluster + "\x00" + o.ID()
+			if _, dup := out[id]; !dup {
+				out[id] = owned{c, o}
 			}
 		}
 	}
