@@ -96,7 +96,7 @@ dependencies:
 	if len(notes) != 1 || !strings.Contains(notes[0], "gone") {
 		t.Errorf("want one note about the dependency that cannot be fetched, got %q", notes)
 	}
-	objs, err := helmTemplate(ch, helmSpec{ReleaseName: "app", Namespace: "apps", Values: map[string]any{}}, "1.35.0")
+	objs, _, err := helmTemplate(ch, helmSpec{ReleaseName: "app", Namespace: "apps", Values: map[string]any{}}, "1.35.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,5 +107,60 @@ dependencies:
 	sort.Strings(names)
 	if got := strings.Join(names, ","); got != "app,cache,common" {
 		t.Errorf("rendered %s, want app,cache,common", got)
+	}
+}
+
+func TestUnstableObjects(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: db\nversion: 1.0.0\n",
+		"templates/password.yaml": `apiVersion: v1
+kind: Secret
+metadata: {name: db-password}
+stringData:
+  password: {{ randAlphaNum 24 | quote }}
+`,
+		// the usual way to keep a generated value: not reported, because the
+		// value in the cluster cannot be seen from here
+		"templates/kept.yaml": `{{- $old := lookup "v1" "Secret" .Release.Namespace "db-kept" }}
+apiVersion: v1
+kind: Secret
+metadata: {name: db-kept}
+stringData:
+  password: {{ if $old }}{{ index $old.data "password" | b64dec | quote }}{{ else }}{{ randAlphaNum 24 | quote }}{{ end }}
+`,
+		"templates/rotate.yaml": `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rotate
+  annotations: {helm.sh/hook: post-upgrade, started: {{ now | quote }}}
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers: [{name: r, image: registry.example.test/r:1}]
+`,
+		"templates/stable.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: db-settings}\ndata: {mode: fast}\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch, err := loader.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unstable, err := helmTemplate(ch, helmSpec{ReleaseName: "db", Namespace: "default", Values: map[string]any{}}, "1.35.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/Secret/default/db-password", "batch/Job/default/rotate"}
+	if strings.Join(unstable, " ") != strings.Join(want, " ") {
+		t.Errorf("unstable = %v, want %v", unstable, want)
 	}
 }

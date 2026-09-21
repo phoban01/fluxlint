@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -167,6 +168,44 @@ func TestCLIObserved(t *testing.T) {
 	out, errOut, exit := cli(t, []string{"NETRC=" + p.netrc}, "check", "--repo", p.dir, "--cache-dir", cacheDir, "--observed", observed)
 	if exit != 0 || !strings.Contains(out, "expected about") || !strings.Contains(out, "observed") {
 		t.Errorf("exit %d, stderr %q\n%.600s", exit, errOut, out)
+	}
+}
+
+// A cluster test and fluxlint look at the same commit. Where the cluster
+// fails and fluxlint said nothing, the run fails and says what the cluster saw.
+func TestCLIClusterState(t *testing.T) {
+	p := internalPlatform(t)
+	env := []string{"NETRC=" + p.netrc}
+	object := func(name, ready, message string) string {
+		return fmt.Sprintf(`{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": {"namespace": "flux-system", "name": %q},
+  "status": {"conditions": [{"type": "Ready", "status": %q, "reason": "HealthCheckFailed", "message": %q}]}}`, name, ready, message)
+	}
+	state := func(apps string) string {
+		path := filepath.Join(t.TempDir(), "state.json")
+		list := `{"kind": "List", "items": [` + object("platform-api", "True", "ok") + "," + apps + `]}`
+		if err := os.WriteFile(path, []byte(list), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	args := []string{"check", "-v", "--repo", p.dir, "--cache-dir", cacheDir, "--cluster-state"}
+
+	out, errOut, exit := cli(t, env, append(args, state(object("apps", "True", "ok")))...)
+	if exit != 0 || strings.Contains(out, "FL-O001") {
+		t.Errorf("the cluster agrees: exit %d, stderr %q\n%.600s", exit, errOut, out)
+	}
+	if !strings.Contains(out, "FL-O003") {
+		t.Errorf("components the cluster state lacks should be listed:\n%.600s", out)
+	}
+
+	out, _, exit = cli(t, env, append(args, state(object("apps", "False", "timeout waiting for: [Deployment/apps/web status: 'InProgress']")))...)
+	if exit != 1 || !strings.Contains(out, "FL-O001") || !strings.Contains(out, "Deployment/apps/web") {
+		t.Errorf("exit %d: an unpredicted failure must fail the run and carry the cluster's message\n%.800s", exit, out)
+	}
+
+	_, errOut, exit = cli(t, env, append(args, filepath.Join(p.dir, ".fluxlint.yaml"))...)
+	if exit != 2 || !strings.Contains(errOut, "no Flux Kustomization or HelmRelease found") {
+		t.Errorf("the wrong file: exit %d, stderr %q", exit, errOut)
 	}
 }
 

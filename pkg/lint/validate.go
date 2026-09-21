@@ -11,7 +11,7 @@ import (
 // Family is the group a rule belongs to: the letter in its ID.
 func (r Rule) Family() string {
 	return map[byte]string{'G': "graph", 'S': "substitution", 'V': "validation", 'R': "runtime", 'C': "contracts",
-		'A': "assertions", 'D': "transitions", 'X': "sources", 'T': "timing"}[r.ID[3]]
+		'A': "assertions", 'D': "transitions", 'X': "sources", 'T': "timing", 'O': "observed"}[r.ID[3]]
 }
 
 // Families lists the family names, in report order.

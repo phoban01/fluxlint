@@ -14,7 +14,9 @@ fluxlint check clusters/production
 ```
 
 !!! note
-    fluxlint is pre-alpha. Rule IDs and the configuration format may still change.
+    fluxlint is young, and every release adds rules. A rule ID and its name never change
+    once released, and the configuration file is read strictly, so an incompatible
+    release fails loudly. Pin a version in CI.
 
 ## What it finds
 

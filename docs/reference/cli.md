@@ -25,6 +25,7 @@ to the repository root. Entrypoints given on the command line replace the ones i
 | `--fail-on` | `error` | the lowest severity that fails the run: `error` or `warning` |
 | `-v` | | list suggestions (`info`) in full |
 | `--observed` | | a file of observed reconcile durations. See [Shorten bootstrap time](../guides/timing.md). |
+| `--cluster-state` | | the Flux objects of a real cluster at this commit (`kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A -o json`). Every failure that no finding predicted is reported as `FL-O001`. Takes one entrypoint. See [Run beside a cluster test](../guides/cluster-tests.md). |
 | `--offline` | | never use the network. A source that is not cached is reported as `FL-X001`. |
 | `--refresh` | | resolve floating refs again: branches, semver ranges, `latest` |
 | `--cache-dir` | the user cache directory | where fetched sources are kept. `sources.cacheDir` in the config sets it too. |

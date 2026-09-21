@@ -104,6 +104,7 @@ type Component struct {
 	Retries          int      // install remediation retries
 	CreatesNamespace string   // install.createNamespace target: created if absent, not owned
 	RenderNotes      []string // parts of the spec the renderer does not model yet
+	Unstable         []string // IDs of objects that render differently each time
 	IsRoot           bool
 	Parent           *Component
 	Children         []*Component

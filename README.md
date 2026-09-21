@@ -12,7 +12,11 @@ It builds every `Kustomization` and `HelmRelease` the way the Flux controllers d
 works out what each one needs from the others, and checks the result. A typical
 repository takes about a second.
 
-fluxlint is pre-alpha. Rule IDs and the configuration format may still change.
+fluxlint is young: expect new rules, and new findings on old repositories, with every
+release. Two things will not move under you. A rule ID and its name, once released, are
+never changed or reused, and a test in this repository enforces it. The configuration
+file is read strictly, so a release that changes it fails loudly instead of ignoring a
+key. Pin a version in CI; `install.sh` verifies the checksum.
 
 ## Features
 
@@ -27,10 +31,14 @@ fluxlint is pre-alpha. Rule IDs and the configuration format may still change.
 * validates custom resources against the CRDs you install, and pods against Pod Security
 * checks built-in objects for values the API server rejects: a selector that does not
   match its template, a port out of range, a mount with no volume
+* finds applies that a fail-closed webhook will reject while it starts, fields that Flux
+  and an autoscaler or cert-manager both write, and chart objects that change on every
+  upgrade
 * reports what a change will prune, orphan or fail to update
 * computes the worst-case bootstrap time and shows which timeouts and `dependsOn`
   entries cause it
 * checks your own rules, written in CEL
+* compares its verdict with a real cluster's, and reports every failure it did not predict
 * reports to the terminal, JSON, GitLab Code Quality, SARIF and GitHub annotations
 
 ## Install

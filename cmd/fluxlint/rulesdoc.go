@@ -17,6 +17,7 @@ var ruleFamilies = []struct{ prefix, title, intro string }{
 	{"FL-D", "Transitions", "What reconciling a change does to a cluster that runs the base. Needs `--base`."},
 	{"FL-X", "Sources and rendering", "What fluxlint could not fetch or does not model."},
 	{"FL-T", "Timing", "How long a bootstrap can take, and why."},
+	{"FL-O", "Observed", "Only with `--cluster-state`: where a real cluster and fluxlint disagree about the same commit."},
 }
 
 // writeRulesDoc prints the rule reference published on the docs site. It is

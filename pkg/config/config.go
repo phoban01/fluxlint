@@ -18,6 +18,14 @@ const DefaultKubeVersion = "1.35.0"
 const DefaultFile = ".fluxlint.yaml"
 
 // Config is the user-facing configuration.
+// ClusterStatus is the Ready condition a real cluster reports for one Flux
+// Kustomization or HelmRelease.
+type ClusterStatus struct {
+	Ready   bool
+	Reason  string
+	Message string
+}
+
 type Config struct {
 	// Entrypoints are directories (relative to the repo root) that a cluster's
 	// bootstrap Kustomization points at, e.g. "clusters/production".
@@ -37,6 +45,10 @@ type Config struct {
 	// Set it to what your clusters run; the default only exists because
 	// Helm's own (v1.20) is rejected by most current charts.
 	KubeVersion string `json:"kubeVersion"`
+
+	// ClusterState is what a real cluster reported for each component key,
+	// supplied with --cluster-state. The findings are compared with it.
+	ClusterState map[string]ClusterStatus `json:"-"`
 
 	Sources Sources `json:"sources"`
 

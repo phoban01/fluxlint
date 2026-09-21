@@ -230,6 +230,7 @@ type cachedChart struct {
 	objs     []byte
 	contract *model.Contract
 	notes    []string
+	unstable []string
 }
 
 func chartKey(c *model.Component, s helmSpec, kubeVersion string) string {
@@ -244,27 +245,27 @@ func chartKey(c *model.Component, s helmSpec, kubeVersion string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (c *BuildCache) chart(key string) ([]model.Object, *model.Contract, []string, bool) {
+func (c *BuildCache) chart(key string) ([]model.Object, *model.Contract, []string, []string, bool) {
 	if c == nil || key == "" {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	c.mu.Lock()
 	e := c.charts[key]
 	c.mu.Unlock()
 	if e == nil {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	var objs []model.Object
 	if err := json.Unmarshal(e.objs, &objs); err != nil {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	c.mu.Lock()
 	c.hits++
 	c.mu.Unlock()
-	return objs, e.contract, append([]string(nil), e.notes...), true
+	return objs, e.contract, append([]string(nil), e.notes...), append([]string(nil), e.unstable...), true
 }
 
-func (c *BuildCache) storeChart(key string, objs []model.Object, contract *model.Contract, notes []string) {
+func (c *BuildCache) storeChart(key string, objs []model.Object, contract *model.Contract, notes, unstable []string) {
 	if c == nil {
 		return
 	}
@@ -275,6 +276,6 @@ func (c *BuildCache) storeChart(key string, objs []model.Object, contract *model
 		return
 	}
 	if b, err := json.Marshal(objs); err == nil {
-		c.charts[key] = &cachedChart{objs: b, contract: contract, notes: append([]string(nil), notes...)}
+		c.charts[key] = &cachedChart{objs: b, contract: contract, notes: append([]string(nil), notes...), unstable: append([]string(nil), unstable...)}
 	}
 }

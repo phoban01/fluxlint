@@ -135,6 +135,24 @@ Default severity: **warning**
 
 A controller rendered from a Git source is built against a newer version of an API module than the tag pinned for the component that installs that module's CRDs. Read from go.mod in both sources.
 
+### FL-R008 admission-window
+
+Default severity: **warning**
+
+A component applies objects that a fail-closed admission webhook intercepts, the webhook is installed by another component, and nothing makes the apply wait until the webhook answers. Between the webhook being registered and its pods serving, the API server rejects every matching request, so the apply fails and is retried a retryInterval later. dependsOn alone is not enough: a Kustomization without wait: true is Ready as soon as it is applied. Webhook rules, objectSelector and namespaceSelector are evaluated; a webhook with matchConditions, or one a controller registers at runtime, is not seen.
+
+### FL-R009 contested-field
+
+Default severity: **warning**
+
+The manifests set a field that another controller also writes: spec.replicas on a workload that a HorizontalPodAutoscaler or KEDA ScaledObject scales, or a caBundle that cert-manager is asked to inject. Flux takes the field back on every reconcile and the other controller changes it again. The first install looks healthy; the fight shows on the second reconcile.
+
+### FL-R010 unstable-render
+
+Default severity: **info**
+
+A Helm chart renders an object differently each time: a template calls randAlphaNum, genCA, now or a similar function. Helm renders again on every upgrade, so the object changes whenever the release is upgraded, whatever the upgrade was for: a generated password is replaced under a running database, a certificate is reissued, pods restart. Raised to a warning for Secrets and webhook configurations. A template that also calls lookup is not reported, because it usually keeps the value already in the cluster.
+
 ## Contracts
 
 What a controller or chart declares it cannot run without.
@@ -268,3 +286,25 @@ A Kustomization substitutes variables from a ConfigMap or Secret that another Ku
 Default severity: **error**
 
 The worst-case bootstrap bound exceeds timing.maxBootstrapBound.
+
+## Observed
+
+Only with `--cluster-state`: where a real cluster and fluxlint disagree about the same commit.
+
+### FL-O001 unpredicted-failure
+
+Default severity: **error**
+
+With --cluster-state: a Kustomization or HelmRelease is not Ready in a real cluster, and no error or warning named it. This is a gap in what fluxlint models. Failures that only repeat another (a dependency or a child that is itself not Ready) are not reported. Read the cluster's message, fix the cause, and consider an assertion or a contract so that the next occurrence is found before the cluster is.
+
+### FL-O002 unconfirmed-finding
+
+Default severity: **info**
+
+With --cluster-state: fluxlint reports an error on a component that is Ready in a real cluster. Either the finding is a false positive, or the cluster was helped by something outside Git, such as a test script that seeds a Secret.
+
+### FL-O003 not-compared
+
+Default severity: **info**
+
+With --cluster-state: components that exist on one side only, so there was nothing to compare. Suspended objects are left out.

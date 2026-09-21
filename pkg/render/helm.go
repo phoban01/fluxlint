@@ -145,7 +145,20 @@ func chartContract(ch *chart.Chart) (*model.Contract, []string) {
 }
 
 // helmTemplate is `helm template --include-crds`, in process.
-func helmTemplate(ch *chart.Chart, s helmSpec, kubeVersion string) ([]model.Object, error) {
+func helmTemplate(ch *chart.Chart, s helmSpec, kubeVersion string) ([]model.Object, []string, error) {
+	manifest, err := helmManifest(ch, s, kubeVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	objs, err := helmObjects(ch, s, manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	return objs, unstableObjects(ch, s, kubeVersion, manifest), nil
+}
+
+// helmManifest renders the release, install and upgrade hooks included.
+func helmManifest(ch *chart.Chart, s helmSpec, kubeVersion string) (string, error) {
 	cfg := &action.Configuration{Log: func(string, ...any) {}}
 	inst := action.NewInstall(cfg)
 	inst.DryRun, inst.ClientOnly, inst.Replace = true, true, true
@@ -154,13 +167,13 @@ func helmTemplate(ch *chart.Chart, s helmSpec, kubeVersion string) ([]model.Obje
 	if kubeVersion != "" {
 		kv, err := chartutil.ParseKubeVersion(kubeVersion)
 		if err != nil {
-			return nil, fmt.Errorf("kubeVersion %q: %w", kubeVersion, err)
+			return "", fmt.Errorf("kubeVersion %q: %w", kubeVersion, err)
 		}
 		inst.KubeVersion = kv
 	}
 	rel, err := inst.Run(ch, s.Values)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	// Hooks that run on install or upgrade create real objects (Jobs, the
@@ -170,12 +183,18 @@ func helmTemplate(ch *chart.Chart, s helmSpec, kubeVersion string) ([]model.Obje
 	for _, hook := range rel.Hooks {
 		for _, ev := range hook.Events {
 			if ev == release.HookPreInstall || ev == release.HookPostInstall || ev == release.HookPreUpgrade || ev == release.HookPostUpgrade {
-				manifest += "\n---\n" + hook.Manifest
+				manifest += "\n---\n# Source: " + hook.Path + "\n" + hook.Manifest
 				break
 			}
 		}
 	}
 
+	return manifest, nil
+}
+
+// helmObjects parses a rendered manifest and applies the post-renderers.
+func helmObjects(ch *chart.Chart, s helmSpec, manifest string) ([]model.Object, error) {
+	var err error
 	var out []model.Object
 	for _, doc := range strings.Split("\n"+manifest, "\n---") {
 		var o model.Object

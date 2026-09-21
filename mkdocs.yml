@@ -46,6 +46,7 @@ nav:
       - Write your own rules: guides/assertions.md
       - Declare what a controller needs: guides/contracts.md
       - Draw the graph: guides/graph.md
+      - Run beside a cluster test: guides/cluster-tests.md
   - Reference:
       - Command line: reference/cli.md
       - Configuration: reference/configuration.md

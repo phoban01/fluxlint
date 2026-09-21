@@ -79,8 +79,8 @@ func printUsage(fs *flag.FlagSet) {
 }
 
 type checkOpts struct {
-	repo, cfgPath, format, failOn, cacheDir, output, base, observed string
-	verbose, offline, refresh                                       bool
+	repo, cfgPath, format, failOn, cacheDir, output, base, observed, clusterState string
+	verbose, offline, refresh                                                     bool
 }
 
 func newResolver(o *checkOpts, cfg *config.Config) (*source.Resolver, error) {
@@ -112,6 +112,7 @@ func checkFlags(o *checkOpts) *flag.FlagSet {
 	fs.StringVar(&o.output, "output", "", "write the report to this file and print the text report to stdout")
 	fs.StringVar(&o.base, "base", "", "Git ref to compare with (e.g. origin/main): only new findings fail the run, and the transition itself is analysed")
 	fs.StringVar(&o.observed, "observed", "", "file with observed reconcile durations (gotk_reconcile_duration_seconds metrics, or a YAML map of component to duration): adds an expected time to the worst-case bound")
+	fs.StringVar(&o.clusterState, "cluster-state", "", "file with the Flux objects of a real cluster at this revision (kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A -o json): reports every failure that no finding predicted. Needs exactly one entrypoint")
 	fs.StringVar(&o.failOn, "fail-on", "error", "lowest severity that fails the run: error or warning")
 	fs.BoolVar(&o.verbose, "v", false, "also list suggestions (info)")
 	fs.BoolVar(&o.offline, "offline", false, "never use the network: external sources must already be cached")
@@ -164,6 +165,22 @@ func check(args []string) int {
 		}
 	}
 
+	if o.clusterState != "" {
+		if len(entrypoints) != 1 {
+			fmt.Fprintf(os.Stderr, "error: --cluster-state describes one cluster, but %d entrypoints are being checked: name the one it belongs to\n", len(entrypoints))
+			return 2
+		}
+		f, err := os.Open(o.clusterState)
+		if err == nil {
+			cfg.ClusterState, err = lint.ParseClusterState(f)
+			f.Close()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: --cluster-state %s: %v\n", o.clusterState, err)
+			return 2
+		}
+	}
+
 	baseDir := ""
 	if o.base != "" {
 		dir, cleanup, err := checkoutBase(o.repo, o.base)
@@ -204,7 +221,9 @@ func check(args []string) int {
 				errs[i] = fmt.Errorf("%s at %s: %w", ep, o.base, err)
 				return
 			}
-			lint.Compare(lint.Run(baseTree, cfg), results[i], cfg)
+			atBase := *cfg // the cluster ran the head, not the base
+			atBase.ClusterState = nil
+			lint.Compare(lint.Run(baseTree, &atBase), results[i], cfg)
 		}()
 	}
 	wg.Wait()

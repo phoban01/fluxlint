@@ -67,8 +67,8 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 			go func() {
 				defer helmWG.Done()
 				key := chartKey(c, spec, cfg.KubeVersion)
-				if raw, contract, notes, ok := r.builds.chart(key); ok {
-					c.Raw, c.Contract = raw, contract
+				if raw, contract, notes, unstable, ok := r.builds.chart(key); ok {
+					c.Raw, c.Contract, c.Unstable = raw, contract, unstable
 					c.RenderNotes = append(c.RenderNotes, notes...)
 					return
 				}
@@ -82,14 +82,14 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 					var notes []string
 					c.Contract, notes = chartContract(ch)
 					c.RenderNotes = append(c.RenderNotes, notes...)
-					raw, err = helmTemplate(ch, spec, cfg.KubeVersion)
+					raw, c.Unstable, err = helmTemplate(ch, spec, cfg.KubeVersion)
 				}
 				if err != nil {
 					c.BuildErr, c.Opaque = err, "chart rendering failed"
 					return
 				}
 				c.Raw = raw
-				r.builds.storeChart(key, raw, c.Contract, c.RenderNotes[specNotes:])
+				r.builds.storeChart(key, raw, c.Contract, c.RenderNotes[specNotes:], c.Unstable)
 			}()
 		}
 		for _, c := range level {

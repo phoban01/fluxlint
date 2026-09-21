@@ -15,8 +15,13 @@ the core knows about any particular repository layout, operator, or company.
 
 ### Non-goals
 
-- Proving that workloads behave correctly once running (that is what a canary
-  environment is for).
+- Proving that workloads behave correctly once running: that an image exists, that a
+  container stays up, that a controller's output is right. A canary environment or a
+  cluster test does that. What fluxlint does claim is narrower and checkable: whether
+  the repository *can* converge, and what reconciling a change will do. Where the two
+  overlap, `--cluster-state` compares fluxlint's verdict with a real cluster's and
+  reports every failure it did not predict ([Run beside a cluster
+  test](guides/cluster-tests.md)).
 - Replacing policy engines. fluxlint can *invoke* policy evaluation over the
   rendered objects, but the rules it owns are about convergence, not style.
 
@@ -112,11 +117,12 @@ Rules come in families, and the [rules reference](reference/rules.md) lists ever
 | Graph | Can the components converge at all? References, ownership, ordering. |
 | Substitution | Do post-build variables resolve, and from where? |
 | Validation | Will the API server accept what is rendered? |
-| Runtime | Can pods start once their objects are applied? |
+| Runtime | Can pods start once their objects are applied? Will an apply be rejected by a webhook that is still starting, and will the second reconcile undo the first? |
 | Contracts | Does the repository give each controller what it says it needs? |
 | Assertions | Do the repository's own rules hold? |
 | Transitions | What does reconciling this change do to a cluster that runs the base? |
 | Timing | How long can a bootstrap take, and why? |
+| Observed | Given what a real cluster reported for this commit, which failures did no rule predict? |
 
 **Contracts (optional, strongest)** — a component may ship a `fluxlint-contract.yaml`
 at its tag declaring `requires:` (CRDs+versions, env/secret keys, namespaces) and
@@ -250,6 +256,11 @@ Before 1.0:
 ## 8. Known limits
 
 - Controller logic is invisible without a contract.
+- Admission webhooks that a controller registers at runtime (policy engines), and
+  webhooks with `matchConditions`, are not evaluated.
+- Races are found by their cause (an ordering that leaves a window), not observed.
+  A race with a cause fluxlint does not model is invisible; `--cluster-state` is how
+  such a gap gets noticed.
 - Anything produced at runtime must be declared in `externals`; an over-broad
   externals list silently weakens the analysis, so its size is reported.
 - Timing output is a bound unless observed durations are supplied.

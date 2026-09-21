@@ -334,7 +334,9 @@ func TestCRDFromChartWithoutOrdering(t *testing.T) {
 	edit(t, dir, "clusters/production/infrastructure.yaml", "  dependsOn:\n    - name: infra-controllers\n", "")
 	r := check(t, dir, "--offline")
 	for _, f := range r.problems() {
-		if f.Rule != "FL-T006" {
+		// the ClusterIssuer also goes through cert-manager's webhook, which
+		// fails closed: the best known race in a Flux bootstrap
+		if f.Rule != "FL-T006" && f.Rule != "FL-R008" {
 			t.Errorf("unexpected %s: %s", f.Rule, f.text())
 		}
 	}
@@ -342,6 +344,11 @@ func TestCRDFromChartWithoutOrdering(t *testing.T) {
 	for _, f := range r.rule("FL-T006") {
 		issuer = issuer || strings.Contains(f.text(), "cert-manager.io/ClusterIssuer from HelmRelease/cert-manager/cert-manager")
 		policy = policy || strings.Contains(f.text(), "kyverno.io/ClusterPolicy from HelmRelease/kyverno/kyverno")
+	}
+	window := r.rule("FL-R008")
+	if len(window) != 1 || !strings.Contains(window[0].text(), "webhook.cert-manager.io") ||
+		!strings.Contains(window[0].text(), "dependsOn: flux-system/infra-controllers") {
+		t.Errorf("the ClusterIssuer can be applied while cert-manager's webhook starts, and the fix is to wait for infra-controllers: %+v", window)
 	}
 	if !issuer || !policy {
 		t.Errorf("both the ClusterIssuer and the ClusterPolicy depend on chart-installed CRDs: %+v", r.rule("FL-T006"))
