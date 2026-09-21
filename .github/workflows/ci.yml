@@ -44,7 +44,8 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           rm kyverno.tar.gz
       - name: the kyverno test must run, not skip
-        run: go test ./pkg/lint/ -run TestKyvernoPolicies -v | tee /dev/stderr | grep -q -- "--- PASS: TestKyvernoPolicies"
+        run: |
+          go test ./pkg/lint/ -run TestKyvernoPolicies -v | tee /dev/stderr | grep -q -e "--- PASS: TestKyvernoPolicies"
       - run: make test
       - name: contract module
         run: cd contract && go vet ./... && go test -race -count=1 ./...
