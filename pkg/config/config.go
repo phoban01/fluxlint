@@ -76,6 +76,12 @@ type Sources struct {
 	// Overrides map a source object to a local directory (relative to the
 	// repository root), e.g. a sibling checkout in a CI job.
 	Overrides []SourceOverride `json:"overrides"`
+	// KubernetesSchemas is where the OpenAPI documents of Kubernetes releases
+	// are read from: a URL prefix or a directory, laid out like the Kubernetes
+	// repository (<base>/v1.35.0/api/openapi-spec/v3/…). Default: the
+	// Kubernetes repository on GitHub. Set it to a mirror when CI has no
+	// route to GitHub.
+	KubernetesSchemas string `json:"kubernetesSchemas"`
 }
 
 type SourceOverride struct {

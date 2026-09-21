@@ -178,6 +178,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 		level = next
 	}
 	t.ByKey[root.Key()] = root
+	r.loadKubeSchemas(ctx, t)
 	return t, nil
 }
 

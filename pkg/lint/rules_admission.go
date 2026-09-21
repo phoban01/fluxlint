@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/phoban01/fluxlint/pkg/kubeschema"
 	"github.com/phoban01/fluxlint/pkg/model"
 	"github.com/phoban01/fluxlint/pkg/validate"
 	corev1 "k8s.io/api/core/v1"
@@ -34,12 +35,33 @@ func (r *run) admissionRules() {
 }
 
 var strictDecoder = kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, scheme.Scheme, scheme.Scheme, kjson.SerializerOptions{Strict: true})
+var lenientDecoder = kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, scheme.Scheme, scheme.Scheme, kjson.SerializerOptions{})
 
 // builtins decodes every object of a built-in API group into its real Go type,
 // strictly. Server-side apply — which is how Flux applies — rejects unknown
 // fields and wrong types the same way.
 func (r *run) builtins() {
-	for _, c := range r.ix.Tree.Components {
+	t := r.ix.Tree
+	// The published schema of the release the cluster runs says which fields
+	// exist there. The Go types linked into this program only say which exist
+	// in the release they were generated from, so they are the fallback.
+	docs := map[string]*kubeschema.Doc{}
+	if t.KubeSchemas != nil {
+		for gv, data := range t.KubeSchemas {
+			if data == nil {
+				continue
+			}
+			group, version, _ := strings.Cut(gv, "/")
+			if doc, err := kubeschema.Parse(data, group, version); err == nil {
+				docs[gv] = doc
+			}
+		}
+	} else if t.SchemaNote != "" {
+		r.report("FL-X003", nil, nil, fmt.Sprintf("built-in objects were checked against the Kubernetes types bundled with fluxlint, not against kubeVersion %s: %s", r.cfg.KubeVersion, t.SchemaNote))
+	}
+	release := strings.TrimPrefix(t.KubeRelease, "v")
+
+	for _, c := range t.Components {
 		for _, o := range c.Objects {
 			// a SOPS-encrypted file is not what reaches the API server: Flux decrypts
 			// it first, which removes the sops block and restores the real values
@@ -53,7 +75,31 @@ func (r *run) builtins() {
 			if err != nil {
 				continue
 			}
+			gv := o.Group() + "/" + o.Version()
+			doc, loaded := docs[gv]
+			published, asked := t.KubeSchemas[gv]
+			switch {
+			case asked && published == nil:
+				r.report("FL-V003", c, o, fmt.Sprintf("Kubernetes %s does not serve %s: the API version was removed, is not there yet, or is misspelt", release, o.APIVersion()))
+				continue
+			case loaded && !doc.Has(o.Kind()):
+				r.report("FL-V003", c, o, fmt.Sprintf("Kubernetes %s has no kind %s in %s", release, o.Kind(), o.APIVersion()))
+				continue
+			case loaded:
+				if errs := doc.Validate(o); len(errs) > 0 {
+					r.report("FL-V003", c, o, fmt.Sprintf("does not match %s %s as Kubernetes %s defines it", o.APIVersion(), o.Kind(), release), errs...)
+					continue
+				}
+			}
 			typed, _, err := strictDecoder.Decode(data, nil, nil)
+			if err != nil && loaded {
+				// valid for the cluster's release; the bundled types are from
+				// another one. Decode leniently so the value checks still run.
+				typed, _, err = lenientDecoder.Decode(data, nil, nil)
+				if err != nil {
+					continue
+				}
+			}
 			switch {
 			case err == nil:
 				if errs := validate.Object(typed); len(errs) > 0 {

@@ -84,6 +84,25 @@ The Kubernetes version charts are rendered for. Charts read it as
 `.Capabilities.KubeVersion` and many refuse to render for a version they do not
 support, so set it to what your clusters run. The default is `1.35.0`.
 
+It is also the release built-in objects are checked against (`FL-V003`). Each Kubernetes
+release publishes the OpenAPI schema of its APIs, and fluxlint validates every
+Deployment, Service, Job and so on against the schema of this release: a field that
+release does not have is an error, and so is an API version it does not serve. Clusters
+on different versions each get their own answer, because an
+[entrypoint](#entrypoints) can set its own `kubeVersion`.
+
+To see what an upgrade will break, run the check once more with the version you are
+moving to:
+
+```yaml
+entrypoints:
+  - path: clusters/production
+    kubeVersion: "1.36"
+```
+
+`1.35`, `1.35.2` and `v1.35.2` are all accepted. Without a patch number `.0` is used,
+since a minor version's API does not change.
+
 ## repoSource
 
 The Flux source object that stands for this repository. A Kustomization whose
@@ -126,6 +145,7 @@ provider is reported as `FL-T006`.
 | --- | --- |
 | `cacheDir` | where fetched sources are kept, relative to the repository root. The default is the user cache directory. `--cache-dir` wins over both. |
 | `overrides` | use a local directory in place of a source, for example a sibling checkout in CI. `path` is relative to the repository root. `namespace` is optional. |
+| `kubernetesSchemas` | where the API schemas of Kubernetes releases are read from: a URL prefix or a directory, laid out like the Kubernetes repository (`<base>/v1.35.0/api/openapi-spec/v3/`). The default is the Kubernetes repository on GitHub. A schema is fetched once per release and cached, so later runs and `--offline` runs need no network. Point it at a mirror or a checked-in directory when CI cannot reach GitHub. |
 
 See [What fluxlint renders](rendering.md) for credentials and cache behaviour.
 

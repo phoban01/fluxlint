@@ -87,7 +87,7 @@ A custom resource fails the OpenAPI schema of the CRD rendered for it, after def
 
 Default severity: **error**
 
-An object of a built-in API group does not decode strictly into its Kubernetes type: an unknown or misspelt field, or a value of the wrong type. Flux applies with server-side apply, which rejects both.
+An object of a built-in API group is not valid for the Kubernetes release the cluster runs (kubeVersion, which can differ per entrypoint): a field that does not exist there, a value of the wrong type, a required field that is missing, or an API version that release does not serve. Every Kubernetes release publishes the OpenAPI schema of its APIs; fluxlint fetches the one for your release once and caches it, so a field added in 1.36 is an error on a 1.35 cluster and fine on a 1.36 one. Set kubeVersion to the release you plan to upgrade to and the same check says what will break. Flux applies with server-side apply, which rejects all of these. When the schemas cannot be loaded (offline with a cold cache), the Kubernetes types bundled with fluxlint are used and the run says so.
 
 ### FL-V004 invalid-value
 

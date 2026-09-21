@@ -18,7 +18,7 @@ that are several separate claims.
 | namespaces and CRDs exist before they are used | yes | yes |
 | substitution variables resolve | yes | yes |
 | charts render with the values given | yes | yes |
-| objects pass the API server's validation | yes, in full | custom resources in full; built-in kinds in part (`FL-V003`, `FL-V004`) |
+| objects pass the API server's validation | yes, for the one version the test cluster runs | custom resources in full; built-in kinds against the published schema of each cluster's release (`FL-V003`), plus the common value rules (`FL-V004`) |
 | pods find their Secrets, keys and ServiceAccounts | for the pods it starts | yes (`FL-R001`, `FL-R002`), and what the controller's code needs if it ships a [contract](contracts.md) |
 | an apply is not rejected by a webhook that is still starting | sometimes: it is a race | yes (`FL-R008`) |
 | a second reconcile changes nothing | if the test reconciles twice | the known causes (`FL-G003`, `FL-R009`, `FL-R010`) |

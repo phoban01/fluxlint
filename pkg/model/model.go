@@ -242,6 +242,14 @@ type Tree struct {
 	Root       *Component
 	Components []*Component // stable order, root first
 	ByKey      map[string]*Component
+
+	// KubeRelease is the Kubernetes release ("v1.35.0") whose published API
+	// schemas were loaded, and KubeSchemas the documents, keyed by
+	// "group/version". A nil entry means the release does not serve that
+	// group and version. SchemaNote says why schemas could not be loaded.
+	KubeRelease string
+	KubeSchemas map[string][]byte
+	SchemaNote  string
 }
 
 // VarUse is one post-build variable referenced by an object of a component.
