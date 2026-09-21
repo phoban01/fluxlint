@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	regtransport "github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/phoban01/fluxlint/pkg/model"
 )
 
@@ -97,6 +99,10 @@ func (r *Resolver) oci(ctx context.Context, src model.Object) (*Result, error) {
 	img, err := remote.Image(parsed, remoteOpts...)
 	if err != nil {
 		r.markDown(host, err)
+		var te *regtransport.Error
+		if errors.As(err, &te) && te.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%s (%s): the registry has no such artifact: %w", url, display, ErrNotFound)
+		}
 		return nil, fmt.Errorf("%s (%s): %w", url, display, err)
 	}
 	digest, err := img.Digest()

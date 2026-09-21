@@ -92,6 +92,9 @@ func (r *Resolver) git(ctx context.Context, src model.Object) (*Result, error) {
 		{"-c", "advice.detachedHead=false", "checkout", "--quiet", "FETCH_HEAD"},
 	} {
 		if _, err := runGit(ctx, tmp, args...); err != nil {
+			if strings.Contains(err.Error(), "couldn't find remote ref") {
+				return nil, fmt.Errorf("%s (%s): the repository has no such ref: %w", url, ref.display, ErrNotFound)
+			}
 			return nil, fmt.Errorf("%s (%s): %w", url, ref.display, err)
 		}
 	}

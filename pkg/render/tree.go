@@ -225,6 +225,7 @@ func (r *renderer) fetch(ctx context.Context, level []*model.Component) {
 				}
 				if err != nil {
 					c.SourceErr = err
+					c.SourceMissing = errors.Is(err, source.ErrNotFound)
 					c.Opaque = "source " + c.Source.String() + " unavailable"
 					if errors.Is(err, source.ErrUnsupported) {
 						c.Opaque = "source kind " + c.Source.Kind + " is not supported yet"

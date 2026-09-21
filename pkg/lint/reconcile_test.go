@@ -185,3 +185,88 @@ func TestUnstableRender(t *testing.T) {
 		}
 	}
 }
+
+const pullSecrets = `apiVersion: v1
+kind: Namespace
+metadata: {name: builders, labels: {pull: "true"}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: runners, labels: {pull: "true"}}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata: {name: registry-login}
+spec:
+  externalSecretName: registry-login
+  namespaces: [builders]
+  externalSecretSpec:
+    secretStoreRef: {name: vault, kind: ClusterSecretStore}
+    dataFrom: [{extract: {key: registry}}]
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata: {name: registry-login-labelled}
+spec:
+  externalSecretName: registry-login-labelled
+  namespaceSelectors: [{matchLabels: {pull: "true"}}]
+  externalSecretSpec:
+    secretStoreRef: {name: vault, kind: ClusterSecretStore}
+    target: {name: registry-login%s}
+    dataFrom: [{extract: {key: registry}}]
+`
+
+// Seen in a real cluster as "already owned by another ExternalSecret".
+func TestContestedSecret(t *testing.T) {
+	repo := func(policy string) string {
+		dir := t.TempDir()
+		write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "secrets", "secrets", ""))
+		write(t, dir, "secrets/all.yaml", fmt.Sprintf(pullSecrets, policy))
+		return dir
+	}
+	cfg := func() *config.Config {
+		c := config.Default()
+		c.Externals.CRDGroups = append(c.Externals.CRDGroups, "external-secrets.io")
+		return c
+	}
+	got := find(analyseDir(t, repo(""), cfg()), "FL-R011")
+	if len(got) != 1 || !strings.Contains(messages(got), "builders/registry-login") || strings.Contains(messages(got), "runners/") {
+		t.Errorf("want one finding, for the one namespace both select:\n%s", messages(got))
+	}
+	if got := find(analyseDir(t, repo(", creationPolicy: Merge"), cfg()), "FL-R011"); len(got) != 0 {
+		t.Errorf("Merge does not take ownership:\n%s", messages(got))
+	}
+}
+
+func TestMissingIssuer(t *testing.T) {
+	const certs = `apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata: {name: internal-ca}
+spec: {selfSigned: {}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: good, namespace: default}
+spec: {secretName: good-tls, dnsNames: [good.example.test], issuerRef: {name: internal-ca, kind: ClusterIssuer}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: serving, namespace: default}
+spec: {secretName: serving-tls, dnsNames: [serving.example.test], issuerRef: {name: selfsigned}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: from-elsewhere, namespace: default}
+spec: {secretName: other-tls, dnsNames: [x.example.test], issuerRef: {name: pca, kind: AWSPCAIssuer, group: awspca.cert-manager.io}}
+`
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "certs", "certs", ""))
+	write(t, dir, "certs/all.yaml", certs)
+	cfg := config.Default()
+	cfg.Externals.CRDGroups = append(cfg.Externals.CRDGroups, "cert-manager.io")
+	got := find(analyseDir(t, dir, cfg), "FL-R012")
+	if len(got) != 1 || !strings.Contains(messages(got), "Certificate/default/serving") ||
+		!strings.Contains(messages(got), "Issuer default/selfsigned") || !strings.Contains(messages(got), "default/serving-tls") {
+		t.Errorf("want only the Certificate whose namespaced Issuer is missing:\n%s", messages(got))
+	}
+}

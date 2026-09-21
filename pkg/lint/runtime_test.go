@@ -125,6 +125,13 @@ spec:
   secretName: serving-cert
   issuerRef: {name: ca}
 ---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: ca
+  namespace: apps
+spec: {selfSigned: {}}
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:

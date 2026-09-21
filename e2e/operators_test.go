@@ -625,6 +625,13 @@ func TestOCIArtifactTagMissing(t *testing.T) {
 	for _, f := range r.problems() {
 		text += f.Rule + " " + f.text() + "\n"
 	}
+	// the registry answered, so this is a defect and not a gap: a cluster
+	// reports it as a source that never becomes Ready, twenty minutes later
+	for _, f := range r.rule("FL-X001") {
+		if f.Severity != "error" || !strings.Contains(f.text(), "its source does not exist") {
+			t.Errorf("a tag the registry does not have must be an error: %s %s", f.Severity, f.text())
+		}
+	}
 	for _, want := range []string{"FL-X001", "flux-system/eso-crds", "9.9.9", "FL-G005", "external-secrets.io"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q in:\n%s", want, text)
@@ -779,5 +786,24 @@ spec:
 	deploy(armOnly)
 	if got := p.check(t).rule("FL-X004"); len(got) != 1 || !strings.Contains(got[0].text(), "not built for linux/amd64 (the registry has linux/arm64)") {
 		t.Errorf("an arm64-only image on amd64 nodes: %+v", got)
+	}
+}
+
+// A version bump to a Git tag that was never pushed: the host answers, the ref
+// is not there, and that is an error rather than an unreachable source.
+func TestGitTagMissing(t *testing.T) {
+	p := internalPlatform(t)
+	edit(t, p.dir, "clusters/prod/cluster-vars.yaml", `api_crds_version: "v1.0.0"`, `api_crds_version: "v7.7.7"`)
+	found := false
+	for _, f := range p.check(t).rule("FL-X001") {
+		if f.Component == "flux-system/platform-api" {
+			found = true
+			if f.Severity != "error" || !strings.Contains(f.text(), "no such ref") || !strings.Contains(f.text(), "v7.7.7") {
+				t.Errorf("got %s: %s", f.Severity, f.text())
+			}
+		}
+	}
+	if !found {
+		t.Error("the missing tag was not reported")
 	}
 }

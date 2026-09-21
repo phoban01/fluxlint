@@ -136,7 +136,7 @@ func (r *Resolver) httpChart(ctx context.Context, repoURL, name, version string)
 	}
 	cv, err := index.Get(name, version)
 	if err != nil {
-		return nil, fmt.Errorf("%s: chart %s: %w", repoURL, display, err)
+		return nil, fmt.Errorf("%s: chart %s: %v: %w", repoURL, display, err, ErrNotFound)
 	}
 	if len(cv.URLs) == 0 {
 		return nil, fmt.Errorf("%s: chart %s %s has no download URL", repoURL, name, cv.Version)

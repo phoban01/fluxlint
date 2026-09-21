@@ -346,3 +346,119 @@ func (r *run) imageRules() {
 		}
 	}
 }
+
+// secretOwners reports a Secret that two ExternalSecrets both want to own.
+// The operator lets the first one win; the second never becomes Ready, and
+// neither does the ClusterExternalSecret that created it.
+func (r *run) secretOwners() {
+	type claim struct {
+		name string // of the ExternalSecret
+		c    *model.Component
+		o    model.Object
+	}
+	claims := map[string][]claim{}
+	add := func(namespace, esName string, spec any, c *model.Component, o model.Object) {
+		if p := model.Str(spec, "target", "creationPolicy"); p != "" && p != "Owner" {
+			return // Merge, Orphan and None do not take ownership
+		}
+		target, _ := externalSecretTarget(spec, esName)
+		key := nn(namespace, target)
+		for _, have := range claims[key] {
+			if have.name == esName {
+				return
+			}
+		}
+		claims[key] = append(claims[key], claim{esName, c, o})
+	}
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			if o.Group() != "external-secrets.io" {
+				continue
+			}
+			switch o.Kind() {
+			case "ExternalSecret":
+				add(o.Namespace(), o.Name(), model.Get(o, "spec"), c, o)
+			case "ClusterExternalSecret":
+				esName := model.Str(o, "spec", "externalSecretName")
+				if esName == "" {
+					esName = o.Name()
+				}
+				for _, ns := range r.ix.Wiring.clusterExternalSecretNamespaces(o) {
+					add(ns, esName, model.Get(o, "spec", "externalSecretSpec"), c, o)
+				}
+			}
+		}
+	}
+	// one finding per pair of objects, however many namespaces they share
+	type pair struct{ first, second string }
+	shared := map[pair][]string{}
+	second := map[pair]claim{}
+	for key, cs := range claims {
+		for i := 1; i < len(cs); i++ {
+			p := pair{cs[0].o.String(), cs[i].o.String()}
+			shared[p] = append(shared[p], key)
+			second[p] = cs[i]
+		}
+	}
+	pairs := make([]pair, 0, len(shared))
+	for p := range shared {
+		pairs = append(pairs, p)
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].first+pairs[i].second < pairs[j].first+pairs[j].second })
+	for _, p := range pairs {
+		keys := shared[p]
+		sort.Strings(keys)
+		cl := second[p]
+		r.report("FL-R011", cl.c, cl.o, fmt.Sprintf("and %s both create Secret %s and both want to own it: the operator refuses the second, which never becomes Ready", p.first, strings.Join(keys, ", ")),
+			"give them different target names, or set target.creationPolicy: Merge on the one that only adds to the Secret")
+	}
+}
+
+// certificateIssuers reports a cert-manager Certificate whose issuer nothing
+// renders. The Certificate is accepted and stays pending; the Secret it should
+// produce never appears, and every pod that mounts it waits.
+func (r *run) certificateIssuers() {
+	issuers := map[string]bool{}
+	opaque := 0
+	for _, c := range r.ix.Tree.Components {
+		if c.Opaque != "" {
+			opaque++
+		}
+		for _, o := range c.Objects {
+			if o.Group() == "cert-manager.io" && (o.Kind() == "Issuer" || o.Kind() == "ClusterIssuer") {
+				issuers[o.Kind()+"|"+o.Namespace()+"|"+o.Name()] = true
+			}
+		}
+	}
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			if o.Group() != "cert-manager.io" || o.Kind() != "Certificate" {
+				continue
+			}
+			ref := model.Get(o, "spec", "issuerRef")
+			if g := model.Str(ref, "group"); g != "" && g != "cert-manager.io" {
+				continue // an external issuer: its kinds are not ours to know
+			}
+			kind, name, ns := model.Str(ref, "kind"), model.Str(ref, "name"), o.Namespace()
+			if kind == "" {
+				kind = "Issuer"
+			}
+			if kind == "ClusterIssuer" {
+				ns = ""
+			}
+			if name == "" || issuers[kind+"|"+ns+"|"+name] {
+				continue
+			}
+			what := kind + " " + name
+			if ns != "" {
+				what = kind + " " + nn(ns, name)
+			}
+			msg := fmt.Sprintf("is issued by %s, which nothing creates: the Certificate stays pending and Secret %s never appears", what, nn(o.Namespace(), model.Str(o, "spec", "secretName")))
+			if opaque > 0 {
+				r.reportAs(Warning, "FL-R012", c, o, msg, fmt.Sprintf("low confidence: %d component(s) are not rendered and may create it", opaque))
+				continue
+			}
+			r.report("FL-R012", c, o, msg)
+		}
+	}
+}

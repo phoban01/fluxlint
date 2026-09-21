@@ -134,6 +134,7 @@ type Component struct {
 	SourceRevision string
 	FloatingRef    string // why the source ref is not reproducible, if so
 	SourceErr      error
+	SourceMissing  bool // the host answered: the ref, tag or chart version is not there
 
 	// GoModule and GoRequires come from go.mod at the root of an external
 	// source; Contract from its fluxlint-contract.yaml.

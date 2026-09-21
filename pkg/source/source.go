@@ -55,6 +55,10 @@ type Result struct {
 // ErrUnsupported marks source kinds fluxlint cannot fetch yet.
 var ErrUnsupported = errors.New("source kind not supported yet")
 
+// ErrNotFound means the host answered, and the ref, tag or chart version is
+// not there. Unlike an unreachable host, that is a fact about the manifests.
+var ErrNotFound = errors.New("it does not exist")
+
 // ErrNotCached is returned in Offline mode on a cache miss.
 var ErrNotCached = errors.New("not in cache and running offline")
 

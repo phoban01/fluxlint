@@ -28,6 +28,8 @@ key. Pin a version in CI; `install.sh` verifies the checksum.
 * finds bootstrap deadlocks: orderings that can never converge from an empty cluster
 * finds missing namespaces, CRDs, sources and substitution variables
 * finds pods that reference a Secret, key, ConfigMap or ServiceAccount nothing creates
+* finds Certificates whose issuer nothing creates, and Secrets that two ExternalSecrets
+  both want to own
 * validates custom resources against the CRDs you install, and pods against Pod Security
 * checks built-in objects for values the API server rejects: a selector that does not
   match its template, a port out of range, a mount with no volume

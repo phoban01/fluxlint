@@ -171,6 +171,18 @@ Default severity: **info**
 
 A Helm chart renders an object differently each time: a template calls randAlphaNum, genCA, now or a similar function. Helm renders again on every upgrade, so the object changes whenever the release is upgraded, whatever the upgrade was for: a generated password is replaced under a running database, a certificate is reissued, pods restart. Raised to a warning for Secrets and webhook configurations. A template that also calls lookup is not reported, because it usually keeps the value already in the cluster.
 
+### FL-R011 contested-secret
+
+Default severity: **error**
+
+Two ExternalSecrets create the same Secret in the same namespace and both want to own it, directly or through ClusterExternalSecrets whose namespaces overlap. The operator refuses the second with "already owned by another ExternalSecret"; it never becomes Ready, and neither does its ClusterExternalSecret. Namespaces are taken from spec.namespaces and from selectors evaluated against the namespaces in Git. target.creationPolicy Merge, Orphan and None do not take ownership and are not reported.
+
+### FL-R012 missing-issuer
+
+Default severity: **error**
+
+A cert-manager Certificate names an Issuer or ClusterIssuer that nothing in the repository creates. The Certificate is accepted and stays pending, the Secret it should produce never appears, and every pod that mounts it waits in ContainerCreating. A warning when some component could not be rendered and may create the issuer. Issuers of other API groups are not checked.
+
 ## Contracts
 
 What a controller or chart declares it cannot run without.
@@ -233,7 +245,7 @@ What fluxlint could not fetch or does not model.
 
 Default severity: **warning**
 
-A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides.
+A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides. Raised to an error when the host answered and the ref, tag or chart version is not there: Flux will not find it either, and everything that waits for the component times out.
 
 ### FL-X002 floating-ref
 

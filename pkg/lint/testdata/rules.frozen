@@ -23,6 +23,8 @@ FL-R007 module-skew
 FL-R008 admission-window
 FL-R009 contested-field
 FL-R010 unstable-render
+FL-R011 contested-secret
+FL-R012 missing-issuer
 FL-S001 undefined-variable
 FL-S002 missing-substitute-source
 FL-S004 unexpanded-variable

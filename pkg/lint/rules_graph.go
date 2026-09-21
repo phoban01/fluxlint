@@ -18,7 +18,12 @@ func (r *run) graphRules() {
 			if c.SourceErr != nil {
 				msg += ": " + c.SourceErr.Error()
 			}
-			r.report("FL-X001", c, nil, msg)
+			if c.SourceMissing {
+				// not a gap in the analysis but a defect: Flux will not find it either
+				r.reportAs(Error, "FL-X001", c, nil, "its source does not exist: "+c.SourceErr.Error())
+			} else {
+				r.report("FL-X001", c, nil, msg)
+			}
 		}
 		for _, note := range c.RenderNotes {
 			r.report("FL-X003", c, nil, note)
