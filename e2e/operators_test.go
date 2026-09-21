@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
@@ -714,5 +715,69 @@ spec:
 	// the answer is cached: the same check passes offline
 	if r := p.check(t, "--offline"); len(r.rule("FL-C001")) == 0 {
 		t.Errorf("offline run lost the contract: %+v", r.problems())
+	}
+}
+
+// A cluster test finds a tag that was never pushed by waiting for
+// ImagePullBackOff. The registry can simply be asked.
+func TestImageThatWasNeverPushed(t *testing.T) {
+	p := internalPlatform(t)
+	pushed, missing := p.registry+"/platform/web:v1.4.0", p.registry+"/platform/web:v1.5.0"
+	img, err := random.Image(64, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := name.ParseReference(pushed)
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatal(err)
+	}
+	deploy := func(image string) {
+		write(t, p.dir, "apps/web.yaml", fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: telemetry}
+spec:
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec:
+      containers:
+        - name: web
+          image: %s
+`, image))
+	}
+
+	// lookups are opt-in
+	deploy(missing)
+	if r := p.check(t); len(r.rule("FL-X004")) != 0 {
+		t.Fatalf("no pattern, no lookup: %+v", r.rule("FL-X004"))
+	}
+	edit(t, p.dir, ".fluxlint.yaml", "kubeVersion:", "images:\n  verify: [\""+p.registry+"/*\"]\n  platforms: [linux/amd64]\nkubeVersion:")
+
+	r := p.check(t)
+	got := r.rule("FL-X004")
+	if len(got) != 1 || got[0].Severity != "error" || !strings.Contains(got[0].text(), "web:v1.5.0") || !strings.Contains(got[0].text(), "no such tag") {
+		t.Fatalf("the bump to a tag nobody pushed must be an error: %+v", r.problems())
+	}
+
+	deploy(pushed)
+	if r := p.check(t); len(r.rule("FL-X004")) != 0 {
+		t.Errorf("the tag exists: %+v", r.rule("FL-X004"))
+	}
+	// found once, it is not asked about again: the check works offline
+	if r := p.check(t, "--offline"); len(r.rule("FL-X004")) != 0 {
+		t.Errorf("offline: %+v", r.rule("FL-X004"))
+	}
+
+	// an image index without the platform the nodes run
+	idx := mutate.AppendManifests(empty.Index, mutate.IndexAddendum{Add: img,
+		Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}}})
+	armOnly := p.registry + "/platform/web:v1.6.0"
+	ref, _ = name.ParseReference(armOnly)
+	if err := remote.WriteIndex(ref, idx); err != nil {
+		t.Fatal(err)
+	}
+	deploy(armOnly)
+	if got := p.check(t).rule("FL-X004"); len(got) != 1 || !strings.Contains(got[0].text(), "not built for linux/amd64 (the registry has linux/arm64)") {
+		t.Errorf("an arm64-only image on amd64 nodes: %+v", got)
 	}
 }

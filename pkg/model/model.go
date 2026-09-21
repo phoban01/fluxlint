@@ -105,10 +105,13 @@ type Component struct {
 	CreatesNamespace string   // install.createNamespace target: created if absent, not owned
 	RenderNotes      []string // parts of the spec the renderer does not model yet
 	Unstable         []string // IDs of objects that render differently each time
-	IsRoot           bool
-	Parent           *Component
-	Children         []*Component
-	Spec             Object // the Kustomization object as applied by Parent (post substitution)
+	// ImageProblems maps a container image to why it cannot be pulled, for
+	// images the registry was asked about.
+	ImageProblems map[string]string
+	IsRoot        bool
+	Parent        *Component
+	Children      []*Component
+	Spec          Object // the Kustomization object as applied by Parent (post substitution)
 
 	Path      string
 	Source    Ref

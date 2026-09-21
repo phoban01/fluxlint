@@ -38,6 +38,7 @@ key. Pin a version in CI; `install.sh` verifies the checksum.
 * computes the worst-case bootstrap time and shows which timeouts and `dependsOn`
   entries cause it
 * checks your own rules, written in CEL
+* asks the registry whether every image tag exists, for the platform your nodes run
 * compares its verdict with a real cluster's, and reports every failure it did not predict
 * reports to the terminal, JSON, GitLab Code Quality, SARIF and GitHub annotations
 

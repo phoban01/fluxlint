@@ -144,6 +144,7 @@ func Tree(ctx context.Context, repoRoot, entrypoint string, cfg *config.Config, 
 			}
 			r.indexData(c.Objects)
 			r.imageContracts(ctx, c)
+			r.verifyImages(ctx, c)
 			// substitution preserves order, so origins still line up
 			if origins := rawOrigins[c]; len(origins) == len(c.Objects) {
 				c.Origins = map[string]string{}
@@ -194,6 +195,8 @@ type renderer struct {
 	builds  *BuildCache
 	// imagePatterns is cfg.Contracts.Images, compiled.
 	imagePatterns []*regexp.Regexp
+	// verifyPatterns is cfg.Images.Verify, compiled.
+	verifyPatterns []*regexp.Regexp
 }
 
 // fetch resolves the external source of every component in level.

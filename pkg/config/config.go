@@ -61,6 +61,9 @@ type Config struct {
 	Timing Timing `json:"timing"`
 
 	Contracts Contracts `json:"contracts"`
+
+	// Images configures checks against container registries.
+	Images Images `json:"images"`
 }
 
 // Sources configures how external Flux sources are materialised.
@@ -238,6 +241,17 @@ type Rules struct {
 	// package fills them in, because it owns the catalogue.
 	Off   map[string]bool   `json:"-"`
 	Level map[string]string `json:"-"`
+}
+
+// Images configures which container images are looked up in their registry.
+type Images struct {
+	// Verify are patterns ("registry.example.com/*", or "*" for every image)
+	// for images that must exist in their registry. Nothing is looked up
+	// unless a pattern is given.
+	Verify []string `json:"verify"`
+	// Platforms are the "os/arch" pairs your nodes run ("linux/amd64"). A
+	// multi-platform image that lacks one of them is reported.
+	Platforms []string `json:"platforms"`
 }
 
 // Contracts configures where contracts are looked for beyond the sources

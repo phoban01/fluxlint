@@ -42,3 +42,4 @@ FL-V004 invalid-value
 FL-X001 source-unavailable
 FL-X002 floating-ref
 FL-X003 render-gap
+FL-X004 image-not-found

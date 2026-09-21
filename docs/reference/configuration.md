@@ -184,6 +184,29 @@ contracts:
 run of characters. Only images that match are looked up. With no patterns, fluxlint
 never asks a registry about an image.
 
+## images
+
+```yaml
+images:
+  verify:
+    - registry.example.com/*
+  platforms: [linux/amd64]
+```
+
+`verify` lists patterns for container images that must exist in their registry. `*`
+matches any run of characters, so `"*"` alone checks every image. For each match
+fluxlint asks the registry whether the tag or digest is there, with the credentials in
+your Docker config, and reports `FL-X004` if it is not. This catches a version bump to a
+tag that was never pushed, which a cluster would only show as `ImagePullBackOff`.
+
+`platforms` names what your nodes run. A multi-platform image that lacks one of them is
+reported too.
+
+An image that was found is cached, so later runs and `--offline` runs do not ask again.
+One that was missing is asked about on every run. If the registry cannot be reached or
+refuses the credentials, the image is listed as not checked (`-v`), and is not a
+finding. With no patterns, fluxlint never asks a registry about an image.
+
 ## timing
 
 | Field | Default | Meaning |

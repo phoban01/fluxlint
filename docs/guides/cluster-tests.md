@@ -23,7 +23,8 @@ that are several separate claims.
 | an apply is not rejected by a webhook that is still starting | sometimes: it is a race | yes (`FL-R008`) |
 | a second reconcile changes nothing | if the test reconciles twice | the known causes (`FL-G003`, `FL-R009`, `FL-R010`) |
 | the change can be applied over what is running | **no**: the cluster is new | yes, with `--base` (`FL-D002`, `FL-D003`) |
-| images exist and containers stay up | yes | **no** |
+| images exist, for the platform the nodes run | yes, as `ImagePullBackOff` and a timeout | yes, by asking the registry (`FL-X004`, with `images.verify`) |
+| containers stay up | for the pods it starts | **no**; a [contract](contracts.md) test in the component's own CI covers the usual cause |
 | policies that a controller registers at runtime admit the objects | yes | **no** |
 | a controller's output is correct | yes | **no** |
 
@@ -93,7 +94,7 @@ only because a dependency or a child failed is not reported again. Each `FL-O001
 of three things:
 
 - a flake in the test. Run it again.
-- something only a cluster can see, such as an image that does not exist. It belongs to
+- something only a cluster can see, such as a container that crashes. It belongs to
   the last three rows of the table.
 - a gap in fluxlint. Close it with an [assertion](assertions.md), a
   [contract](contracts.md), or an issue.
@@ -111,7 +112,7 @@ Run both for a few weeks and count.
 
 - If every cluster-test failure was either predicted by fluxlint or a flake, the cluster
   test is costing you its runtime and proving nothing more on merge requests. Move it to
-  a nightly job, where it still tests images and runtime policy, and let fluxlint gate
+  a nightly job, where it still tests that containers stay up and runtime policy, and let fluxlint gate
   merge requests.
 - If `FL-O001` keeps finding real problems of a kind you cannot express as a rule, keep
   the cluster test on merge requests, and run fluxlint first so that the quick failures

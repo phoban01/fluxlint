@@ -319,3 +319,30 @@ func orderAfter(c, p *model.Component) string {
 	}
 	return fmt.Sprintf("add dependsOn: %s to %s, and wait: true on %s, which applies %s", w, c, w, p)
 }
+
+// imageRules reports workloads whose image the registry does not have.
+func (r *run) imageRules() {
+	for _, c := range r.ix.Tree.Components {
+		if len(c.ImageProblems) == 0 {
+			continue
+		}
+		for _, o := range c.Objects {
+			wl, ok := podTemplate(o)
+			if !ok {
+				continue
+			}
+			sev := Error
+			if wl.Replicas != nil && *wl.Replicas == 0 {
+				sev = Warning
+			}
+			for _, list := range []string{"initContainers", "containers"} {
+				for _, ctr := range model.List(wl.Spec, list) {
+					img := model.Str(ctr, "image")
+					if why, bad := c.ImageProblems[img]; bad {
+						r.reportAs(sev, "FL-X004", c, o, fmt.Sprintf("container %s uses image %s: %s", model.Str(ctr, "name"), img, why))
+					}
+				}
+			}
+		}
+	}
+}

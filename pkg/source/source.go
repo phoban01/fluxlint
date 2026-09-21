@@ -71,6 +71,7 @@ type Resolver struct {
 	indexes map[string]*indexCall
 	// contracts memoises lookups of contracts attached to images.
 	contracts map[string]*contractCall
+	images    map[string]*imageCall
 }
 
 // connectTimeout bounds how long an unreachable host can hold up a run.

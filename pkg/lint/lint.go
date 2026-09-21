@@ -88,6 +88,7 @@ var Rules = []Rule{
 	{"FL-X001", "source-unavailable", Warning, "A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides."},
 	{"FL-X002", "floating-ref", Info, "A source follows a branch or semver range. What Flux applies can change without a commit to this repository, and fluxlint's result reflects whatever was fetched last."},
 	{"FL-X003", "render-gap", Info, "Part of a component's spec is not modelled, so what fluxlint analysed may differ from what the controller applies."},
+	{"FL-X004", "image-not-found", Error, "A pod template names a container image that its registry does not have: a tag that was never pushed, a typo, a Git tag mistaken for an image tag. With images.platforms set, also an image that is not built for your nodes. The pod stays in ImagePullBackOff, and a Kustomization that waits for it times out. Only images matching images.verify are looked up, with the credentials of your Docker config; an image that could not be checked is a render note, not a finding. Scaled-to-zero workloads are reported as a warning: nothing pulls the image until they are scaled up."},
 	{"FL-T001", "critical-path", Info, "The chain of waits that determines the worst-case time for a bootstrap to converge. A bound, not a prediction."},
 	{"FL-T002", "dominant-delay", Info, "One component contributes a large share of the worst-case bound, usually a generous timeout underneath a wait: true parent."},
 	{"FL-T004", "unjustified-dependency", Info, "A dependsOn edge for which no import exists between the two subtrees. It may encode a runtime need fluxlint cannot see; if not, it only serialises reconciliation."},
@@ -164,6 +165,7 @@ func Run(t *model.Tree, cfg *config.Config) *Result {
 	r.admissionWindows(declaredGraph(r.ix))
 	r.contestedFields()
 	r.unstableRenders()
+	r.imageRules()
 	r.admissionRules()
 	r.controllerRules()
 	r.assertionRules()

@@ -229,6 +229,12 @@ Default severity: **info**
 
 Part of a component's spec is not modelled, so what fluxlint analysed may differ from what the controller applies.
 
+### FL-X004 image-not-found
+
+Default severity: **error**
+
+A pod template names a container image that its registry does not have: a tag that was never pushed, a typo, a Git tag mistaken for an image tag. With images.platforms set, also an image that is not built for your nodes. The pod stays in ImagePullBackOff, and a Kustomization that waits for it times out. Only images matching images.verify are looked up, with the credentials of your Docker config; an image that could not be checked is a render note, not a finding. Scaled-to-zero workloads are reported as a warning: nothing pulls the image until they are scaled up.
+
 ## Timing
 
 How long a bootstrap can take, and why.

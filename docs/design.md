@@ -15,7 +15,7 @@ the core knows about any particular repository layout, operator, or company.
 
 ### Non-goals
 
-- Proving that workloads behave correctly once running: that an image exists, that a
+- Proving that workloads behave correctly once running: that a
   container stays up, that a controller's output is right. A canary environment or a
   cluster test does that. What fluxlint does claim is narrower and checkable: whether
   the repository *can* converge, and what reconciling a change will do. Where the two
