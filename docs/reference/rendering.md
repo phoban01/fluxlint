@@ -134,6 +134,22 @@ ClusterResourceSet'"'"'s namespace is enough.
 Deliveries are not Flux objects, so they take no part in ordering or timing. What
 reaches a workload cluster some other way is not in Git: declare it under `externals`.
 
+## Flux versions
+
+There is no setting for the Flux version, because the repository already says it.
+Flux objects are custom resources, and each cluster's Kustomizations and HelmReleases
+are checked against the Flux CRDs that cluster installs (its `gotk-components.yaml`).
+Two clusters on different Flux releases are each checked against their own.
+
+A field the installed CRD does not define is reported (`FL-V009`): the API server drops it
+without an error, so a field from newer Flux documentation, or one copied from a cluster
+on a newer release, silently has no effect.
+
+What fluxlint does not track per release is how the controllers build: manifests are
+rendered with the kustomize and Helm libraries of current Flux. A repository that does
+not keep Flux's manifests in Git (Flux Operator, Terraform) gets no CRD check for Flux
+objects.
+
 ## Limits
 
 * `Bucket` sources are not fetched.

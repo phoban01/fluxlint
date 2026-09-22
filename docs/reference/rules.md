@@ -81,7 +81,7 @@ Whether the API server will accept what is rendered.
 
 Default severity: **error**
 
-A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Unknown fields are not reported: a structural schema prunes them.
+A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Fields the schema does not define are FL-V009.
 
 ### FL-V003 invalid-builtin
 
@@ -100,6 +100,12 @@ A built-in object has the right fields and types but a value the API server reje
 Default severity: **error**
 
 A label value is not a string: YAML reads an unquoted 1.31, true or 0 as a number or a boolean. For anything Helm installs the API server rejects the object. For anything a Flux Kustomization applies the result is worse, because nothing fails: kustomize-controller reads the labels to add its own, the read fails as a whole on one non-string value, and it writes back only its own two. The object is applied with none of its labels and the Kustomization is Ready. A Namespace loses its Pod Security level this way, and anything that selects by the lost labels stops matching. Flux treats this as intended (fluxcd/flux2 issue 4968, fluxcd/pkg pull request 1208), so it has to be caught before the merge. Checked on every kind, custom resources included. Annotations are not checked: kustomize converts those to strings.
+
+### FL-V009 unknown-field
+
+Default severity: **error**
+
+A custom resource sets a field that its CRD, as rendered from the repository, does not define. The API server does not reject it: it prunes it, silently, and the object is applied without it. A misspelt field, or one from a newer version of the CRD than the cluster runs, has no effect and nobody is told. Each cluster is checked against the CRDs it installs, so a Flux Kustomization on a cluster with Flux 2.4 is checked against Flux 2.4's CRD. Parts of a schema marked x-kubernetes-preserve-unknown-fields accept anything and are not reported.
 
 ### FL-V002 pod-security
 

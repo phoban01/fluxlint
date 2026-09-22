@@ -16,6 +16,7 @@ import (
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	apiextcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
+	structuralpruning "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -274,7 +275,26 @@ func (r *run) customResources() {
 			if cv.validator == nil {
 				continue
 			}
+			if _, encrypted := o["sops"]; encrypted {
+				continue // Flux decrypts it first, which removes the sops block
+			}
 			obj := runtime.DeepCopyJSON(jsonable(o))
+			// the API server prunes what the schema does not define, before
+			// defaulting and validation, and says nothing about it
+			if cv.structural != nil {
+				opts := structuralschema.UnknownFieldPathOptions{TrackUnknownFieldPaths: true}
+				var dropped []string
+				for _, p := range structuralpruning.PruneWithOptions(runtime.DeepCopyJSON(obj), cv.structural, true, opts) {
+					// status is written by the controller; what Git says there is ignored anyway
+					if p != "status" && !strings.HasPrefix(p, "status.") {
+						dropped = append(dropped, p)
+					}
+				}
+				if len(dropped) > 0 {
+					sort.Strings(dropped)
+					r.report("FL-V009", c, o, fmt.Sprintf("sets %d field(s) that its CRD does not define at %s: the API server drops them without an error, so they have no effect", len(dropped), o.Version()), dropped...)
+				}
+			}
 			if cv.structural != nil {
 				structuraldefaulting.Default(obj, cv.structural)
 			}

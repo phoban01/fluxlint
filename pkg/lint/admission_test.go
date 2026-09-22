@@ -221,3 +221,74 @@ metadata:
 		t.Errorf("FL-V003 repeats it:\n%s", schema)
 	}
 }
+
+// A field the CRD does not define is pruned by the API server, silently.
+func TestUnknownFieldsArePruned(t *testing.T) {
+	const widgets = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.test
+spec:
+  group: example.test
+  names: {kind: Widget, plural: widgets}
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                interval: {type: string}
+                values: {type: object, x-kubernetes-preserve-unknown-fields: true}
+                ports:
+                  type: array
+                  items: {type: object, properties: {port: {type: integer}}}
+`
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "widgets", "widgets", ""))
+	write(t, dir, "widgets/crd.yaml", widgets)
+	write(t, dir, "widgets/crs.yaml", `apiVersion: example.test/v1
+kind: Widget
+metadata: {name: fine, namespace: default, labels: {a: b}}
+spec:
+  interval: 5m
+  values: {anything: {goes: [here]}}
+  ports: [{port: 80}]
+---
+apiVersion: example.test/v1
+kind: Widget
+metadata: {name: typo, namespace: default}
+spec:
+  intreval: 5m
+  ports: [{port: 80, protocol: TCP}]
+---
+apiVersion: example.test/v1
+kind: Widget
+metadata: {name: newer, namespace: default}
+spec:
+  interval: 5m
+  healthCheckExprs: [{current: "true"}]
+status: {ready: true}
+`)
+	got := find(analyseDir(t, dir, nil), "FL-V009")
+	text := messages(got)
+	if len(got) != 2 {
+		t.Fatalf("want the misspelt and the too-new fields, and nothing from the valid Widget:\n%s", text)
+	}
+	if strings.Contains(text, "status") {
+		t.Errorf("status is the controller's:\n%s", text)
+	}
+	for _, want := range []string{"Widget/default/typo", "spec.intreval", "spec.ports[0].protocol", "Widget/default/newer", "spec.healthCheckExprs", "drops them without an error"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("FL-V009 lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Widget/default/fine") {
+		t.Errorf("x-kubernetes-preserve-unknown-fields accepts anything, and metadata is not the CRD's to define:\n%s", text)
+	}
+}
