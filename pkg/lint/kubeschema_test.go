@@ -93,8 +93,7 @@ func TestBuiltinsAgainstTheClustersRelease(t *testing.T) {
 	}
 
 	old := check("1.20")
-	for _, want := range []string{"Job/default/report", "spec.podReplacementPolicy: no such field", "as Kubernetes 1.20.0 defines it",
-		"ConfigMap/default/settings", "metadata.labels.tier: must be a string, got 1"} {
+	for _, want := range []string{"Job/default/report", "spec.podReplacementPolicy: no such field", "as Kubernetes 1.20.0 defines it"} {
 		if !strings.Contains(old, want) {
 			t.Errorf("1.20 lacks %q:\n%s", want, old)
 		}

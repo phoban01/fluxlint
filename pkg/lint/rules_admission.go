@@ -27,6 +27,7 @@ import (
 )
 
 func (r *run) admissionRules() {
+	r.metadataStrings()
 	r.podSecurityLabels()
 	r.podSecurity()
 	r.customResources()
@@ -90,7 +91,17 @@ func (r *run) builtins() {
 				r.report("FL-V003", c, o, fmt.Sprintf("Kubernetes %s has no kind %s in %s", release, o.Kind(), o.APIVersion()))
 				continue
 			case loaded:
-				if errs := doc.Validate(o); len(errs) > 0 {
+				errs := doc.Validate(o)
+				// a label or annotation that is not a string is FL-V008's to
+				// report, with what Flux does about it
+				kept := errs[:0]
+				for _, e := range errs {
+					meta := strings.HasPrefix(e, "metadata.labels.")
+					if !meta || !strings.Contains(e, "must be a string") {
+						kept = append(kept, e)
+					}
+				}
+				if errs = kept; len(errs) > 0 {
 					r.report("FL-V003", c, o, fmt.Sprintf("does not match %s %s as Kubernetes %s defines it", o.APIVersion(), o.Kind(), release), errs...)
 					continue
 				}

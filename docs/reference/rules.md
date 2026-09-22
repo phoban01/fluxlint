@@ -95,6 +95,12 @@ Default severity: **error**
 
 A built-in object has the right fields and types but a value the API server rejects: a selector that does not match the pod template, a port out of range or a port name over 15 characters, a volumeMount with no volume, a CronJob schedule that does not parse, a Service with two unnamed ports. Flux applies with a server-side dry run first, so one such object fails its whole Kustomization. The checks restate the API server's own validation and cover the common workload, Service, Ingress, RBAC and storage kinds; an object of another kind is not checked.
 
+### FL-V008 metadata-not-string
+
+Default severity: **error**
+
+A label value is not a string: YAML reads an unquoted 1.31, true or 0 as a number or a boolean. For anything Helm installs the API server rejects the object. For anything a Flux Kustomization applies the result is worse, because nothing fails: kustomize-controller reads the labels to add its own, the read fails as a whole on one non-string value, and it writes back only its own two. The object is applied with none of its labels and the Kustomization is Ready. A Namespace loses its Pod Security level this way, and anything that selects by the lost labels stops matching. Flux treats this as intended (fluxcd/flux2 issue 4968, fluxcd/pkg pull request 1208), so it has to be caught before the merge. Checked on every kind, custom resources included. Annotations are not checked: kustomize converts those to strings.
+
 ### FL-V002 pod-security
 
 Default severity: **error**

@@ -47,6 +47,7 @@ FL-V004 invalid-value
 FL-V005 policy-violation
 FL-V006 policy-invalid
 FL-V007 kyverno-violation
+FL-V008 metadata-not-string
 FL-X001 source-unavailable
 FL-X002 floating-ref
 FL-X003 render-gap

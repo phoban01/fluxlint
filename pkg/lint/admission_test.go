@@ -161,3 +161,63 @@ metadata:
 		t.Errorf("want the version without a v and the misspelt level:\n%s", text)
 	}
 }
+
+// One label value that YAML does not read as a string costs the object all of
+// its labels: Flux applies it without them and reports Ready.
+func TestLabelThatIsNotAString(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "objects", "objects", ""))
+	write(t, dir, "objects/crd.yaml", gadgetCRD)
+	write(t, dir, "objects/all.yaml", `apiVersion: v1
+kind: Namespace
+metadata:
+  name: team
+  labels:
+    example.test/protected: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn-version: 1.31
+---
+apiVersion: example.test/v1
+kind: Gadget
+metadata:
+  name: custom
+  namespace: default
+  labels: {enabled: true, tier: gold}
+spec: {size: 1}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: annotated
+  namespace: default
+  annotations: {example.test/weight: 5}  # kustomize quotes annotations, so this is fine
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fine
+  namespace: default
+  labels: {version: "1.31", enabled: "true", empty: null}
+`)
+	r := analyseDir(t, dir, nil)
+	got := find(r, "FL-V008")
+	text := messages(got)
+	if len(got) != 2 {
+		t.Fatalf("want the Namespace and the custom resource:\n%s", text)
+	}
+	for _, want := range []string{
+		"Namespace/team", "pod-security.kubernetes.io/warn-version: 1.31", "none of its 3 labels", "reports Ready",
+		"Gadget/default/custom", "enabled: true", "none of its 2 labels",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("FL-V008 lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "ConfigMap/default/fine") || strings.Contains(text, "ConfigMap/default/annotated") {
+		t.Errorf("quoted values and a null are strings to the API server:\n%s", text)
+	}
+	// said once, not again by the schema check
+	if schema := messages(find(r, "FL-V003")); strings.Contains(schema, "must be a string") {
+		t.Errorf("FL-V003 repeats it:\n%s", schema)
+	}
+}
