@@ -1,12 +1,15 @@
 package lint_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/phoban01/fluxlint/pkg/config"
 	"github.com/phoban01/fluxlint/pkg/lint"
+	"github.com/phoban01/fluxlint/pkg/render"
+	"github.com/phoban01/fluxlint/pkg/source"
 )
 
 func fluxObject(kind, namespace, name, ready, message string, suspend bool) string {
@@ -108,4 +111,38 @@ func TestClusterStateComparison(t *testing.T) {
 			}
 		}
 	})
+}
+
+// "fluxlint could not look at it" is not a prediction of the failure.
+func TestClusterStateUnrenderedIsNoVerdict(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: private, namespace: flux-system}
+spec: {interval: 10m, url: "https://git.example.test/private.git", ref: {tag: v1}}
+---
+`+strings.Replace(fmt.Sprintf(ksHeader, "operator", "operator", ""), "name: flux-system\n  path", "name: private\n  path", 1))
+	cfg := config.Default()
+	cfg.ClusterState = map[string]config.ClusterStatus{
+		"flux-system/operator": {Reason: "ReconciliationFailed", Message: "webhook refused"},
+	}
+	res, err := source.New(source.Options{CacheDir: t.TempDir(), Mode: source.Offline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := render.Tree(context.Background(), dir, "clusters/prod", cfg, res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := lint.Run(tree, cfg)
+	if len(find(r, "FL-X001")) == 0 {
+		t.Fatalf("premise: the source cannot be fetched offline")
+	}
+	if got := find(r, "FL-O001"); len(got) != 0 {
+		t.Errorf("an unrendered component is not a failure fluxlint missed:\n%s", messages(got))
+	}
+	got := messages(find(r, "FL-O003"))
+	if !strings.Contains(got, "no verdict") || !strings.Contains(got, "flux-system/operator") {
+		t.Errorf("and it must not count as predicted either:\n%s", got)
+	}
 }

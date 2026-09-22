@@ -373,4 +373,4 @@ With --cluster-state: fluxlint reports an error on a component that is Ready in 
 
 Default severity: **info**
 
-With --cluster-state: components that exist on one side only, so there was nothing to compare. Suspended objects are left out.
+With --cluster-state: components that exist on one side only, and components that failed in the cluster but could not be rendered, so there is no verdict either way. Suspended objects are left out.
