@@ -264,3 +264,21 @@ func TestValuesTheAPIServerRejects(t *testing.T) {
 		t.Errorf("problems = %v, want only the Deployment: %+v", p, r.Findings)
 	}
 }
+
+// A deadlock elsewhere leaves no schedule, but a missing retryInterval is
+// still a missing retryInterval.
+func TestRetryCliffDespiteADeadlock(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml",
+		strings.Replace(fmt.Sprintf(ksHeader, "a", "a", "  wait: true\n  dependsOn:\n    - name: b\n"), "  retryInterval: 1m\n", "", 1)+"---\n"+
+			fmt.Sprintf(ksHeader, "b", "b", "  wait: true\n  dependsOn:\n    - name: a\n"))
+	write(t, dir, "a/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: a, namespace: default}\n")
+	write(t, dir, "b/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: b, namespace: default}\n")
+	r := analyseDir(t, dir, nil)
+	if len(find(r, "FL-G002")) == 0 {
+		t.Fatal("premise: a and b depend on each other")
+	}
+	if got := find(r, "FL-T007"); len(got) != 1 || got[0].Component != "flux-system/a" {
+		t.Errorf("want the retry cliff on a:\n%s", messages(got))
+	}
+}

@@ -39,7 +39,9 @@ func (r *run) timingRules() *Timing {
 	g := declaredGraph(ix)
 	s, ok := g.Solve()
 	if !ok {
-		// the declared graph itself is cyclic; FL-G002 already says so
+		// the declared graph itself is cyclic (FL-G002): there is no schedule,
+		// but the rules that need none still apply
+		r.orderingRules(g)
 		return nil
 	}
 	t := &Timing{Bound: s.Makespan, Schedule: s}
@@ -97,30 +99,9 @@ func (r *run) timingRules() *Timing {
 	}
 
 	r.dependencyReview(g, s)
-	r.staleSubstitution()
-
-	// implicit ordering
-	for _, n := range ix.Needs {
-		if !n.matters() || n.Kind == NeedRuntime { // a pod waiting for a Secret is not a failed apply
-			continue
-		}
-		e := needEdge(n)
-		if g.Reachable(e.From, e.To, nil) || g.Reachable(e.To, e.From, nil) {
-			continue // ordered already, or a deadlock that FL-G002 reports
-		}
-		penalty := n.Consumer.RetryInterval
-		if !n.Consumer.HasRetryInterval {
-			penalty = n.Consumer.Interval
-		}
-		r.report("FL-T006", n.Consumer, n.Object,
-			fmt.Sprintf("needs %s %s from %s but no ordering is declared; each failed attempt costs %v", n.Kind, n.What, n.Provider, penalty),
-			fmt.Sprintf("add dependsOn: %s to %s (or to the nearest ancestors that are siblings)", n.Provider, n.Consumer))
-	}
+	r.orderingRules(g)
 
 	for _, c := range ix.Tree.Components {
-		if !c.IsRoot && !c.IsHelmRelease() && !c.HasRetryInterval && c.Interval >= retryCliff {
-			r.report("FL-T007", c, nil, fmt.Sprintf("no retryInterval: a failed apply is not retried for %v (interval)", c.Interval))
-		}
 		// timeout inversion: a waiting parent gives up before a child is allowed to
 		pb := healthBound(c)
 		if !c.Wait || pb == 0 {
@@ -146,6 +127,38 @@ func (r *run) timingRules() *Timing {
 		}
 	}
 	return t
+}
+
+// orderingRules are the timing rules that need no schedule. They run even
+// when the graph has a cycle, because a deadlock elsewhere does not make a
+// missing retryInterval or ordering any less real.
+func (r *run) orderingRules(g *graph.Graph) {
+	ix := r.ix
+	r.staleSubstitution()
+
+	// implicit ordering
+	for _, n := range ix.Needs {
+		if !n.matters() || n.Kind == NeedRuntime { // a pod waiting for a Secret is not a failed apply
+			continue
+		}
+		e := needEdge(n)
+		if g.Reachable(e.From, e.To, nil) || g.Reachable(e.To, e.From, nil) {
+			continue // ordered already, or a deadlock that FL-G002 reports
+		}
+		penalty := n.Consumer.RetryInterval
+		if !n.Consumer.HasRetryInterval {
+			penalty = n.Consumer.Interval
+		}
+		r.report("FL-T006", n.Consumer, n.Object,
+			fmt.Sprintf("needs %s %s from %s but no ordering is declared; each failed attempt costs %v", n.Kind, n.What, n.Provider, penalty),
+			fmt.Sprintf("add dependsOn: %s to %s (or to the nearest ancestors that are siblings)", n.Provider, n.Consumer))
+	}
+
+	for _, c := range ix.Tree.Components {
+		if !c.IsRoot && !c.IsHelmRelease() && !c.HasRetryInterval && c.Interval >= retryCliff {
+			r.report("FL-T007", c, nil, fmt.Sprintf("no retryInterval: a failed apply is not retried for %v (interval)", c.Interval))
+		}
+	}
 }
 
 // staleSubstitution: kustomize-controller reconciles every Kustomization of a
