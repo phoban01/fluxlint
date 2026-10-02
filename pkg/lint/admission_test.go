@@ -131,3 +131,192 @@ func TestCELValidationRulesInCRD(t *testing.T) {
 		t.Fatalf("the CRD author's CEL rule must be enforced:\n%s", messages(r.Findings))
 	}
 }
+
+// YAML integers reach CEL as ints, as they do in the API server: a rule over
+// an object holding an int32 field must not trip over a float64.
+func TestCELRulesSeeIntegersAsInts(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "gadgets", "gadgets", ""))
+	write(t, dir, "gadgets/crd.yaml", strings.Replace(gadgetCRD, "                size: {type: integer, minimum: 1}\n",
+		"                size: {type: integer, minimum: 1}\n"+
+			"                limits:\n"+
+			"                  type: array\n"+
+			"                  items:\n"+
+			"                    type: object\n"+
+			"                    properties:\n"+
+			"                      min: {type: integer, format: int32, minimum: 1}\n"+
+			"                      max: {type: integer, format: int32, minimum: 1}\n"+
+			"                    x-kubernetes-validations:\n"+
+			"                      - rule: has(self.min) || has(self.max)\n"+
+			"                        message: set min or max\n"+
+			"                      - rule: \"!has(self.min) || !has(self.max) || self.min <= self.max\"\n"+
+			"                        message: min must not exceed max\n", 1))
+	write(t, dir, "gadgets/crs.yaml", gadget("v1", "ok", "{size: 5, limits: [{max: 1}, {min: 1, max: 2}]}")+
+		gadget("v1", "inverted", "{size: 5, limits: [{min: 3, max: 2}]}"))
+	r := analyseDir(t, dir, nil)
+	got := find(r, "FL-V001")
+	if len(got) != 1 || !strings.Contains(messages(got), "Gadget/default/inverted") || !strings.Contains(messages(got), "min must not exceed max") {
+		t.Fatalf("integer fields must evaluate as ints in CEL rules:\n%s", messages(r.Findings))
+	}
+}
+
+// The admission plugin parses these labels, and refuses a Namespace it
+// cannot parse. A version needs its "v".
+func TestPodSecurityLabelsMustParse(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "namespaces", "namespaces", ""))
+	write(t, dir, "namespaces/all.yaml", `apiVersion: v1
+kind: Namespace
+metadata:
+  name: good
+  labels: {pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn-version: v1.31}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: no-v
+  labels: {pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn-version: "1.31"}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bad-level
+  labels: {pod-security.kubernetes.io/enforce: Restricted}
+`)
+	got := find(analyseDir(t, dir, nil), "FL-V002")
+	text := messages(got)
+	if len(got) != 2 || !strings.Contains(text, "Namespace/no-v") || !strings.Contains(text, `must be "latest" or "v1.x"`) || !strings.Contains(text, "Namespace/bad-level") {
+		t.Errorf("want the version without a v and the misspelt level:\n%s", text)
+	}
+}
+
+// One label value that YAML does not read as a string costs the object all of
+// its labels: Flux applies it without them and reports Ready.
+func TestLabelThatIsNotAString(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "objects", "objects", ""))
+	write(t, dir, "objects/crd.yaml", gadgetCRD)
+	write(t, dir, "objects/all.yaml", `apiVersion: v1
+kind: Namespace
+metadata:
+  name: team
+  labels:
+    example.test/protected: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn-version: 1.31
+---
+apiVersion: example.test/v1
+kind: Gadget
+metadata:
+  name: custom
+  namespace: default
+  labels: {enabled: true, tier: gold}
+spec: {size: 1}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: annotated
+  namespace: default
+  annotations: {example.test/weight: 5}  # kustomize quotes annotations, so this is fine
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fine
+  namespace: default
+  labels: {version: "1.31", enabled: "true", empty: null}
+`)
+	r := analyseDir(t, dir, nil)
+	got := find(r, "FL-V008")
+	text := messages(got)
+	if len(got) != 2 {
+		t.Fatalf("want the Namespace and the custom resource:\n%s", text)
+	}
+	for _, want := range []string{
+		"Namespace/team", "pod-security.kubernetes.io/warn-version: 1.31", "none of its 3 labels", "reports Ready",
+		"Gadget/default/custom", "enabled: true", "none of its 2 labels",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("FL-V008 lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "ConfigMap/default/fine") || strings.Contains(text, "ConfigMap/default/annotated") {
+		t.Errorf("quoted values and a null are strings to the API server:\n%s", text)
+	}
+	// said once, not again by the schema check
+	if schema := messages(find(r, "FL-V003")); strings.Contains(schema, "must be a string") {
+		t.Errorf("FL-V003 repeats it:\n%s", schema)
+	}
+}
+
+// A field the CRD does not define is pruned by the API server, silently.
+func TestUnknownFieldsArePruned(t *testing.T) {
+	const widgets = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.test
+spec:
+  group: example.test
+  names: {kind: Widget, plural: widgets}
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                interval: {type: string}
+                values: {type: object, x-kubernetes-preserve-unknown-fields: true}
+                ports:
+                  type: array
+                  items: {type: object, properties: {port: {type: integer}}}
+`
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "widgets", "widgets", ""))
+	write(t, dir, "widgets/crd.yaml", widgets)
+	write(t, dir, "widgets/crs.yaml", `apiVersion: example.test/v1
+kind: Widget
+metadata: {name: fine, namespace: default, labels: {a: b}}
+spec:
+  interval: 5m
+  values: {anything: {goes: [here]}}
+  ports: [{port: 80}]
+---
+apiVersion: example.test/v1
+kind: Widget
+metadata: {name: typo, namespace: default}
+spec:
+  intreval: 5m
+  ports: [{port: 80, protocol: TCP}]
+---
+apiVersion: example.test/v1
+kind: Widget
+metadata: {name: newer, namespace: default}
+spec:
+  interval: 5m
+  healthCheckExprs: [{current: "true"}]
+status: {ready: true}
+`)
+	got := find(analyseDir(t, dir, nil), "FL-V009")
+	text := messages(got)
+	if len(got) != 2 {
+		t.Fatalf("want the misspelt and the too-new fields, and nothing from the valid Widget:\n%s", text)
+	}
+	if strings.Contains(text, "status") {
+		t.Errorf("status is the controller's:\n%s", text)
+	}
+	for _, want := range []string{"Widget/default/typo", "spec.intreval", "spec.ports[0].protocol", "Widget/default/newer", "spec.healthCheckExprs", "drops them without an error"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("FL-V009 lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Widget/default/fine") {
+		t.Errorf("x-kubernetes-preserve-unknown-fields accepts anything, and metadata is not the CRD's to define:\n%s", text)
+	}
+}

@@ -16,10 +16,12 @@ import (
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	apiextcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
+	structuralpruning "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 	"k8s.io/client-go/kubernetes/scheme"
 	psaapi "k8s.io/pod-security-admission/api"
@@ -27,6 +29,8 @@ import (
 )
 
 func (r *run) admissionRules() {
+	r.metadataStrings()
+	r.podSecurityLabels()
 	r.podSecurity()
 	r.customResources()
 	r.builtins()
@@ -59,6 +63,9 @@ func (r *run) builtins() {
 	} else if t.SchemaNote != "" {
 		r.report("FL-X003", nil, nil, fmt.Sprintf("built-in objects were checked against the Kubernetes types bundled with fluxlint, not against kubeVersion %s: %s", r.cfg.KubeVersion, t.SchemaNote))
 	}
+	if t.APINote != "" {
+		r.report("FL-X003", nil, nil, t.APINote)
+	}
 	release := strings.TrimPrefix(t.KubeRelease, "v")
 
 	for _, c := range t.Components {
@@ -86,7 +93,17 @@ func (r *run) builtins() {
 				r.report("FL-V003", c, o, fmt.Sprintf("Kubernetes %s has no kind %s in %s", release, o.Kind(), o.APIVersion()))
 				continue
 			case loaded:
-				if errs := doc.Validate(o); len(errs) > 0 {
+				errs := doc.Validate(o)
+				// a label or annotation that is not a string is FL-V008's to
+				// report, with what Flux does about it
+				kept := errs[:0]
+				for _, e := range errs {
+					meta := strings.HasPrefix(e, "metadata.labels.")
+					if !meta || !strings.Contains(e, "must be a string") {
+						kept = append(kept, e)
+					}
+				}
+				if errs = kept; len(errs) > 0 {
 					r.report("FL-V003", c, o, fmt.Sprintf("does not match %s %s as Kubernetes %s defines it", o.APIVersion(), o.Kind(), release), errs...)
 					continue
 				}
@@ -122,6 +139,30 @@ func (r *run) builtins() {
 // podSecurity evaluates every pod template against the Pod Security level its
 // namespace enforces, with the evaluator the API server itself uses. A
 // violation means the pods are never created.
+// podSecurityLabels checks the pod-security.kubernetes.io labels of every
+// Namespace with the parser the admission plugin uses. The plugin refuses to
+// create a Namespace whose labels it cannot parse, and refuses an update that
+// makes them unparseable: "restricted" and "v1.31" are values, "Restricted" and
+// "1.31" are not.
+func (r *run) podSecurityLabels() {
+	for _, c := range r.ix.Tree.Components {
+		for _, o := range c.Objects {
+			if o.Kind() != "Namespace" || o.Group() != "" {
+				continue
+			}
+			_, errs := psaapi.PolicyToEvaluate(labelsOf(o), psaapi.Policy{})
+			if len(errs) == 0 {
+				continue
+			}
+			detail := make([]string, len(errs))
+			for i, e := range errs {
+				detail[i] = e.Error()
+			}
+			r.report("FL-V002", c, o, "has Pod Security labels the admission plugin cannot parse: the API server refuses to create the Namespace, or to change its labels to this", detail...)
+		}
+	}
+}
+
 func (r *run) podSecurity() {
 	evaluator, err := psapolicy.NewEvaluator(psapolicy.DefaultChecks(), nil)
 	if err != nil {
@@ -235,7 +276,26 @@ func (r *run) customResources() {
 			if cv.validator == nil {
 				continue
 			}
+			if _, encrypted := o["sops"]; encrypted {
+				continue // Flux decrypts it first, which removes the sops block
+			}
 			obj := runtime.DeepCopyJSON(jsonable(o))
+			// the API server prunes what the schema does not define, before
+			// defaulting and validation, and says nothing about it
+			if cv.structural != nil {
+				opts := structuralschema.UnknownFieldPathOptions{TrackUnknownFieldPaths: true}
+				var dropped []string
+				for _, p := range structuralpruning.PruneWithOptions(runtime.DeepCopyJSON(obj), cv.structural, true, opts) {
+					// status is written by the controller; what Git says there is ignored anyway
+					if p != "status" && !strings.HasPrefix(p, "status.") {
+						dropped = append(dropped, p)
+					}
+				}
+				if len(dropped) > 0 {
+					sort.Strings(dropped)
+					r.report("FL-V009", c, o, fmt.Sprintf("sets %d field(s) that its CRD does not define at %s: the API server drops them without an error, so they have no effect", len(dropped), o.Version()), dropped...)
+				}
+			}
 			if cv.structural != nil {
 				structuraldefaulting.Default(obj, cv.structural)
 			}
@@ -262,10 +322,11 @@ func (r *run) customResources() {
 }
 
 // jsonable normalises YAML-decoded values (ints, nested model.Object) into the
-// JSON shapes the API machinery expects.
+// JSON shapes the API machinery expects. Whole numbers stay int64, as the API
+// server decodes them: CEL refuses a float64 where the schema says integer.
 func jsonable(o model.Object) map[string]any {
 	var out map[string]any
 	b, _ := json.Marshal(o)
-	_ = json.Unmarshal(b, &out)
+	_ = utiljson.Unmarshal(b, &out)
 	return out
 }

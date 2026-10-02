@@ -105,6 +105,15 @@ type Component struct {
 	CreatesNamespace string   // install.createNamespace target: created if absent, not owned
 	RenderNotes      []string // parts of the spec the renderer does not model yet
 	Unstable         []string // IDs of objects that render differently each time
+	// Cluster is where the component's objects are applied: "" for the
+	// cluster Flux runs in, otherwise the kubeconfig Secret
+	// (spec.kubeConfig.secretRef) that points at another one. Objects applied
+	// to different clusters never meet, whatever their names.
+	Cluster string
+	// Synthetic marks a component fluxlint made up to hold objects that
+	// something other than Flux delivers (a ClusterResourceSet). It has no
+	// place in the ordering of Flux objects.
+	Synthetic bool
 	// ImageProblems maps a container image to why it cannot be pulled, for
 	// images the registry was asked about.
 	ImageProblems map[string]string
@@ -250,6 +259,9 @@ type Tree struct {
 	KubeRelease string
 	KubeSchemas map[string][]byte
 	SchemaNote  string
+	// APINote says why charts were rendered with Helm's built-in list of API
+	// versions instead of the release's own.
+	APINote string
 }
 
 // VarUse is one post-build variable referenced by an object of a component.

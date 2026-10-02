@@ -25,7 +25,7 @@ The precedence graph has a cycle, so the repository cannot converge from an empt
 
 Default severity: **error**
 
-The same object is rendered by more than one Flux Kustomization. They overwrite each other on every reconcile, and pruning one deletes the object for both.
+The same object is rendered by more than one Flux Kustomization. They overwrite each other on every reconcile, and pruning one deletes the object for both. Objects applied to different clusters (spec.kubeConfig) are different objects. A Namespace whose copies are identical is a warning: nothing is overwritten, but pruning either owner still deletes it.
 
 ### FL-G004 missing-namespace
 
@@ -81,7 +81,7 @@ Whether the API server will accept what is rendered.
 
 Default severity: **error**
 
-A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Unknown fields are not reported: a structural schema prunes them.
+A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Fields the schema does not define are FL-V009.
 
 ### FL-V003 invalid-builtin
 
@@ -95,11 +95,23 @@ Default severity: **error**
 
 A built-in object has the right fields and types but a value the API server rejects: a selector that does not match the pod template, a port out of range or a port name over 15 characters, a volumeMount with no volume, a CronJob schedule that does not parse, a Service with two unnamed ports. Flux applies with a server-side dry run first, so one such object fails its whole Kustomization. The checks restate the API server's own validation and cover the common workload, Service, Ingress, RBAC and storage kinds; an object of another kind is not checked.
 
+### FL-V008 metadata-not-string
+
+Default severity: **error**
+
+A label value is not a string: YAML reads an unquoted 1.31, true or 0 as a number or a boolean. For anything Helm installs the API server rejects the object. For anything a Flux Kustomization applies the result is worse, because nothing fails: kustomize-controller reads the labels to add its own, the read fails as a whole on one non-string value, and it writes back only its own two. The object is applied with none of its labels and the Kustomization is Ready. A Namespace loses its Pod Security level this way, and anything that selects by the lost labels stops matching. Flux treats this as intended (fluxcd/flux2 issue 4968, fluxcd/pkg pull request 1208), so it has to be caught before the merge. Checked on every kind, custom resources included. Annotations are not checked: kustomize converts those to strings.
+
+### FL-V009 unknown-field
+
+Default severity: **error**
+
+A custom resource sets a field that its CRD, as rendered from the repository, does not define. The API server does not reject it: it prunes it, silently, and the object is applied without it. A misspelt field, or one from a newer version of the CRD than the cluster runs, has no effect and nobody is told. Each cluster is checked against the CRDs it installs, so a Flux Kustomization on a cluster with Flux 2.4 is checked against Flux 2.4's CRD. Parts of a schema marked x-kubernetes-preserve-unknown-fields accept anything and are not reported.
+
 ### FL-V002 pod-security
 
 Default severity: **error**
 
-A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created.
+A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created. Also reports a Namespace whose pod-security.kubernetes.io labels the plugin cannot parse (a level that is not privileged, baseline or restricted; a version that is not latest or v1.x, such as 1.31 without the v): the API server refuses to create such a Namespace.
 
 ### FL-V005 policy-violation
 
@@ -133,7 +145,7 @@ A pod references a Secret or ConfigMap (or a key of one) that nothing creates: n
 
 Default severity: **error**
 
-A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Pods are not created, or cannot pull their image.
+A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Without the ServiceAccount, pods are not created. A missing imagePullSecret is a warning: the kubelet starts the pod anyway, and only an image that needs the Secret fails to pull.
 
 ### FL-R003 positional-patch
 
@@ -361,4 +373,4 @@ With --cluster-state: fluxlint reports an error on a component that is Ready in 
 
 Default severity: **info**
 
-With --cluster-state: components that exist on one side only, so there was nothing to compare. Suspended objects are left out.
+With --cluster-state: components that exist on one side only, and components that failed in the cluster but could not be rendered, so there is no verdict either way. Suspended objects are left out.

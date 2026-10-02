@@ -91,8 +91,11 @@ func Text(w io.Writer, s Summary, verbose bool) {
 // that could not be rendered says nothing about it.
 type component struct {
 	Component string `json:"component"`
-	Parent    string `json:"parent,omitempty"`
-	Rendered  bool   `json:"rendered"`
+	// Cluster is set when the component applies to another cluster
+	// (spec.kubeConfig): the kubeconfig Secret that names it.
+	Cluster  string `json:"cluster,omitempty"`
+	Parent   string `json:"parent,omitempty"`
+	Rendered bool   `json:"rendered"`
 	// NotRendered is why: the source was unavailable, the build failed, …
 	NotRendered string `json:"notRendered,omitempty"`
 	Error       string `json:"error,omitempty"`
@@ -126,7 +129,7 @@ func JSON(w io.Writer, s Summary) error {
 		}
 		e := entry{Entrypoint: r.Tree.Entrypoint, KubeRelease: r.Tree.KubeRelease, Findings: f, Timing: r.Timing, Components: []component{}}
 		for _, c := range r.Tree.Components {
-			cc := component{Component: c.String(), Rendered: c.Opaque == "", NotRendered: c.Opaque, Objects: len(c.Objects),
+			cc := component{Component: c.String(), Cluster: c.Cluster, Rendered: c.Opaque == "", NotRendered: c.Opaque, Objects: len(c.Objects),
 				Revision: c.SourceRevision, FloatingRef: c.FloatingRef, Path: c.Path}
 			if c.Parent != nil {
 				cc.Parent = c.Parent.String()

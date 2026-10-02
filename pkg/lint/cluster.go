@@ -85,10 +85,11 @@ func (r *run) clusterRules() {
 	if len(state) == 0 {
 		return
 	}
-	var predicted strings.Builder // everything an error or warning says
+	var predicted strings.Builder // everything a finding that can explain a failure says
 	errorsOn := map[string][]string{}
 	for _, f := range r.findings {
-		if f.Severity == Info {
+		// "not analysed", timing advice and the comparison itself explain no failure
+		if f.Severity == Info || !explainsFailure(f.Rule) {
 			continue
 		}
 		predicted.WriteString(f.Component + "\n" + f.Message + "\n" + strings.Join(f.Detail, "\n") + "\n")
@@ -101,7 +102,7 @@ func (r *run) clusterRules() {
 		return ok && !st.Ready
 	}
 
-	var absent []string
+	var absent, blind []string
 	for _, c := range r.ix.Tree.Components {
 		st, ok := state[c.Key()]
 		switch {
@@ -116,6 +117,12 @@ func (r *run) clusterRules() {
 					strings.Join(uniq(rules), ", ")))
 			}
 		default:
+			if c.Opaque != "" {
+				// fluxlint did not render it, so it can neither have predicted
+				// the failure nor have missed it
+				blind = append(blind, c.String()+": "+c.Opaque)
+				continue
+			}
 			if mentions(predicted.String(), c.String()) {
 				continue
 			}
@@ -152,6 +159,10 @@ func (r *run) clusterRules() {
 	if len(absent) > 0 {
 		r.report("FL-O003", nil, nil, fmt.Sprintf("%d component(s) rendered from Git are not in the cluster state, so nothing was compared for them", len(absent)), absent...)
 	}
+	if len(blind) > 0 {
+		sort.Strings(blind)
+		r.report("FL-O003", nil, nil, fmt.Sprintf("%d component(s) are not Ready in the cluster but were not rendered, so there is no verdict on them", len(blind)), blind...)
+	}
 	if len(unknown) > 0 {
 		r.report("FL-O003", nil, nil, fmt.Sprintf("%d Flux object(s) in the cluster state are not rendered from this entrypoint", len(unknown)), unknown...)
 	}
@@ -165,4 +176,17 @@ func uniq(sorted []string) []string {
 		}
 	}
 	return out
+}
+
+// explainsFailure reports whether a rule's findings can say why a component
+// is not Ready. A source that could not be fetched (FL-X001) is a gap in the
+// analysis, and timing advice describes delays, not failures.
+func explainsFailure(rule string) bool {
+	switch {
+	case rule == "FL-X001", rule == "FL-X002", rule == "FL-X003":
+		return false
+	case strings.HasPrefix(rule, "FL-T"), strings.HasPrefix(rule, "FL-O"):
+		return rule == "FL-T100"
+	}
+	return true
 }

@@ -83,6 +83,73 @@ Secrets. Test and delete hooks are left out.
 Each release is a node in the graph, with helm-controller's timeout and install
 retries. A chart that cannot render with your values is reported as `FL-G008`.
 
+### What a chart is told about the cluster
+
+Charts ask `.Capabilities` what the cluster is and render differently for the answer:
+`policy/v1` or `policy/v1beta1`, a ServiceMonitor or none. helm-controller asks the real
+cluster. `helm template` answers from a list built into Helm, which has no kinds and
+still has API versions that were removed years ago, so the same chart can render
+differently offline.
+
+fluxlint answers with what a cluster of your `kubeVersion` serves, read from the
+discovery documents that Kubernetes release publishes (fetched once and cached, like the
+API schemas). Alpha versions are left out, since clusters do not serve them unless told
+to. APIs that come from CRDs are not in the answer yet: a chart that adds a
+ServiceMonitor only when `monitoring.coreos.com/v1` exists renders without it. Releases
+older than 1.30 publish no such document, and Helm's list is used; the run says so.
+
+## More than one cluster
+
+A Kustomization or HelmRelease with `spec.kubeConfig` applies to another cluster: the
+usual way a management cluster installs add-ons into the clusters it creates. fluxlint
+names each target cluster after its kubeconfig Secret and keeps them apart:
+
+* objects in different clusters never meet. cert-manager installed in the management
+  cluster and again in a workload cluster is two installations, not one object with two
+  owners. A Secret in one cluster does not satisfy a pod in another, and a CRD, a
+  namespace, a webhook or an admission policy only counts in the cluster it is in.
+* ordering spans all of them. `dependsOn`, `wait` and timeouts live in the cluster Flux
+  runs in, so the deadlock check and the timing analysis use the whole graph.
+* sources are read where Flux runs, whatever cluster the result is applied to.
+
+A child that a remote Kustomization creates stays in that cluster. The JSON report names
+the cluster of every component that is not local.
+
+### What Cluster API delivers
+
+A `ClusterResourceSet` names Secrets or ConfigMaps whose values are manifests, and
+Cluster API applies those manifests to the workload clusters of its namespace that its
+`clusterSelector` matches. fluxlint follows them. The manifests can be in a Secret or
+ConfigMap in Git, or in the `target.template` of the ExternalSecret or
+ClusterExternalSecret that produces the Secret, where template actions such as
+`{{ .token }}` stand for values that are not known but leave the objects and their keys
+readable. What is delivered counts as present in that cluster: a Secret with its keys,
+a ClusterIssuer, a namespace.
+
+A workload cluster is matched to its Cluster API `Cluster` by the usual name of its
+kubeconfig Secret, `<cluster>-kubeconfig`. When the `Cluster` object is in Git its labels
+decide whether the selector matches; when something else creates it, being in the
+ClusterResourceSet'"'"'s namespace is enough.
+
+Deliveries are not Flux objects, so they take no part in ordering or timing. What
+reaches a workload cluster some other way is not in Git: declare it under `externals`.
+
+## Flux versions
+
+There is no setting for the Flux version, because the repository already says it.
+Flux objects are custom resources, and each cluster's Kustomizations and HelmReleases
+are checked against the Flux CRDs that cluster installs (its `gotk-components.yaml`).
+Two clusters on different Flux releases are each checked against their own.
+
+A field the installed CRD does not define is reported (`FL-V009`): the API server drops it
+without an error, so a field from newer Flux documentation, or one copied from a cluster
+on a newer release, silently has no effect.
+
+What fluxlint does not track per release is how the controllers build: manifests are
+rendered with the kustomize and Helm libraries of current Flux. A repository that does
+not keep Flux's manifests in Git (Flux Operator, Terraform) gets no CRD check for Flux
+objects.
+
 ## Limits
 
 * `Bucket` sources are not fetched.

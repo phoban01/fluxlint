@@ -70,7 +70,12 @@ var fluxGroups = map[string]bool{
 }
 
 // BuildIndex computes exports and resolves imports.
-func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
+func BuildIndex(t *model.Tree, cfg *config.Config) *Index { return buildIndex(t, cfg, t.Components) }
+
+// buildIndex indexes the components of t. Flux sources are looked up among
+// all: a source is an object of the cluster Flux runs in, even when what is
+// built from it is applied to another cluster.
+func buildIndex(t *model.Tree, cfg *config.Config, all []*model.Component) *Index {
 	ix := &Index{
 		Tree: t, Cfg: cfg,
 		Owner:      map[string][]*model.Component{},
@@ -87,15 +92,21 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 			case o.Kind() == "CustomResourceDefinition":
 				gk := model.Str(o, "spec", "group") + "/" + model.Str(o, "spec", "names", "kind")
 				ix.CRDs[gk] = append(ix.CRDs[gk], c)
-			case o.IsSource():
-				ref := model.Ref{Kind: o.Kind(), Namespace: o.Namespace(), Name: o.Name()}
-				ix.Sources[ref.String()] = c
 			}
 		}
 		// install.createNamespace creates the namespace if absent without
 		// owning it, so it is an export but never a dual-ownership conflict
 		if ns := c.CreatesNamespace; ns != "" {
 			ix.Namespaces[ns] = append(ix.Namespaces[ns], c)
+		}
+	}
+
+	for _, c := range all {
+		for _, o := range c.Objects {
+			if o.IsSource() {
+				ref := model.Ref{Kind: o.Kind(), Namespace: o.Namespace(), Name: o.Name()}
+				ix.Sources[ref.String()] = c
+			}
 		}
 	}
 
@@ -116,6 +127,14 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 		extGroups[g] = true
 	}
 
+	crdScope := map[string]string{}
+	for _, c := range t.Components {
+		for _, o := range c.Objects {
+			if o.Kind() == "CustomResourceDefinition" {
+				crdScope[model.Str(o, "spec", "group")+"/"+model.Str(o, "spec", "names", "kind")] = model.Str(o, "spec", "scope")
+			}
+		}
+	}
 	for _, c := range t.Components {
 		seen := map[string]bool{}
 		once := func(k string) bool {
@@ -126,7 +145,7 @@ func BuildIndex(t *model.Tree, cfg *config.Config) *Index {
 			return true
 		}
 		for _, o := range c.Objects {
-			if ns := o.Namespace(); ns != "" && !builtinNamespaces[ns] && once("ns|"+ns) {
+			if ns := o.Namespace(); ns != "" && !builtinNamespaces[ns] && !clusterScoped(o, crdScope) && once("ns|"+ns) {
 				n := Need{Kind: NeedNamespace, What: ns, Consumer: c, Object: o}
 				switch provs := ix.Namespaces[ns]; {
 				case len(provs) > 0:

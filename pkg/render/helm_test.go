@@ -164,3 +164,66 @@ spec:
 		t.Errorf("unstable = %v, want %v", unstable, want)
 	}
 }
+
+// A chart that asks the cluster which APIs it serves must get the answer of
+// the cluster's Kubernetes release, as helm-controller would give it, and not
+// Helm's built-in list, which has no kinds and still has policy/v1beta1.
+func TestChartSeesTheClustersAPIs(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: web\nversion: 1.0.0\n",
+		"templates/pdb.yaml": `{{- if .Capabilities.APIVersions.Has "policy/v1/PodDisruptionBudget" }}
+apiVersion: policy/v1
+{{- else }}
+apiVersion: policy/v1beta1
+{{- end }}
+kind: PodDisruptionBudget
+metadata: {name: web}
+spec: {minAvailable: 1, selector: {matchLabels: {app: web}}}
+{{- if .Capabilities.APIVersions.Has "monitoring.example.test/v1" }}
+---
+apiVersion: monitoring.example.test/v1
+kind: Scrape
+metadata: {name: web}
+{{- end }}
+`,
+		"crds/thing.yaml": "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: things.example.test}\nspec:\n  group: example.test\n  names: {kind: Thing, plural: things}\n  scope: Namespaced\n  versions: [{name: v1, served: true, storage: true, schema: {openAPIV3Schema: {type: object}}}]\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch, err := loader.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(apis []string) map[string]string {
+		objs, _, err := helmTemplate(ch, helmSpec{ReleaseName: "web", Namespace: "default", Values: map[string]any{}, APIVersions: apis}, "1.35.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, o := range objs {
+			out[o.Kind()] = o.APIVersion()
+		}
+		return out
+	}
+	if got := render(nil); got["PodDisruptionBudget"] != "policy/v1beta1" {
+		t.Fatalf("the premise of this test is that Helm's built-in list lacks kinds: %v", got)
+	}
+	got := render([]string{"v1", "policy/v1", "policy/v1/PodDisruptionBudget"})
+	if got["PodDisruptionBudget"] != "policy/v1" {
+		t.Errorf("with the cluster's APIs the chart must choose policy/v1: %v", got)
+	}
+	if got["CustomResourceDefinition"] == "" {
+		t.Errorf("CRDs from crds/ must still be included: %v", got)
+	}
+	if _, ok := got["Scrape"]; ok {
+		t.Errorf("an API the cluster does not serve must not be assumed: %v", got)
+	}
+}

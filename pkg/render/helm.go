@@ -3,6 +3,7 @@ package render
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,10 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
+	kubefake "helm.sh/helm/v3/pkg/kube/fake"
 	"helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v3/pkg/storage"
+	"helm.sh/helm/v3/pkg/storage/driver"
 	"helm.sh/helm/v3/pkg/strvals"
 	"sigs.k8s.io/yaml"
 )
@@ -23,6 +27,9 @@ type helmSpec struct {
 	Values                 map[string]any
 	PostRenderers          []overlay // spec.postRenderers[].kustomize, in order
 	Notes                  []string
+	// APIVersions is what the target cluster serves, for
+	// .Capabilities.APIVersions. Empty: Helm's built-in list.
+	APIVersions []string `json:"-"`
 }
 
 // helmSpecOf follows helm-controller: the release lives in
@@ -170,6 +177,22 @@ func helmManifest(ch *chart.Chart, s helmSpec, kubeVersion string) (string, erro
 			return "", fmt.Errorf("kubeVersion %q: %w", kubeVersion, err)
 		}
 		inst.KubeVersion = kv
+	}
+	if len(s.APIVersions) > 0 {
+		// Client-only mode always answers .Capabilities.APIVersions with Helm's
+		// built-in list, which has no kinds and still has API versions removed
+		// years ago, so a chart that asks "is policy/v1/PodDisruptionBudget
+		// served?" renders for a cluster that does not exist. helm-controller
+		// asks the real cluster. An in-memory stand-in lets the list be set.
+		caps := chartutil.DefaultCapabilities.Copy()
+		caps.APIVersions = chartutil.VersionSet(s.APIVersions)
+		if inst.KubeVersion != nil {
+			caps.KubeVersion = *inst.KubeVersion
+		}
+		cfg.Capabilities = caps
+		cfg.KubeClient = &kubefake.PrintingKubeClient{Out: io.Discard}
+		cfg.Releases = storage.Init(driver.NewMemory())
+		inst.ClientOnly = false
 	}
 	rel, err := inst.Run(ch, s.Values)
 	if err != nil {

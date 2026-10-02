@@ -69,3 +69,23 @@ func (r *renderer) loadKubeSchemas(ctx context.Context, t *model.Tree) {
 		}
 	}
 }
+
+// apiVersions is what a cluster of the configured Kubernetes release serves,
+// for charts that ask. Loaded once; nil when it cannot be, and Helm's
+// built-in list is used instead.
+func (r *renderer) apiVersions(ctx context.Context) []string {
+	r.apiOnce.Do(func() {
+		if r.resolver == nil {
+			return
+		}
+		release, err := source.KubeRelease(r.cfg.KubeVersion)
+		if err != nil {
+			return
+		}
+		if r.apis, err = r.resolver.KubeAPIVersions(ctx, r.cfg.Sources.KubernetesSchemas, release); err != nil {
+			r.apiNote = "charts were rendered with Helm's built-in list of API versions, not the one Kubernetes " +
+				strings.TrimPrefix(release, "v") + " serves: " + err.Error()
+		}
+	})
+	return r.apis
+}

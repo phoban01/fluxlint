@@ -55,7 +55,7 @@ type Finding struct {
 var Rules = []Rule{
 	{"FL-G001", "dangling-reference", Error, "A dependsOn or sourceRef names an object that nothing in the repository defines. Flux reports the dependent as not ready forever."},
 	{"FL-G002", "bootstrap-deadlock", Error, "The precedence graph has a cycle, so the repository cannot converge from an empty cluster. Each edge of the cycle is listed with its reason; remove or reverse one."},
-	{"FL-G003", "dual-ownership", Error, "The same object is rendered by more than one Flux Kustomization. They overwrite each other on every reconcile, and pruning one deletes the object for both."},
+	{"FL-G003", "dual-ownership", Error, "The same object is rendered by more than one Flux Kustomization. They overwrite each other on every reconcile, and pruning one deletes the object for both. Objects applied to different clusters (spec.kubeConfig) are different objects. A Namespace whose copies are identical is a warning: nothing is overwritten, but pruning either owner still deletes it."},
 	{"FL-G004", "missing-namespace", Error, "An object is applied into a namespace that nothing creates. Declare it under externals.namespaces if it is created out of band."},
 	{"FL-G005", "unknown-crd", Warning, "Custom resources of this API group are applied but no rendered component installs its CRDs. They may come from a Helm chart or external source fluxlint has not rendered; declare the group under externals.crdGroups to acknowledge."},
 	{"FL-G008", "build-failed", Error, "kustomize build (or post-build substitution) failed for the path a Flux Kustomization points at."},
@@ -63,15 +63,17 @@ var Rules = []Rule{
 	{"FL-S002", "missing-substitute-source", Error, "postBuild.substituteFrom names a ConfigMap/Secret that nothing renders and that is not optional. Declare it under externals.substitutions if it is created out of band."},
 	{"FL-S004", "unexpanded-variable", Info, "${...} expressions appear in a Kustomization without postBuild, so they reach the cluster verbatim. Expected for shell snippets; a bug if Flux substitution was intended."},
 	{"FL-G006", "unserved-version", Error, "A custom resource uses an apiVersion that the CRD rendered for it does not serve. The apply fails with 'no matches for kind'."},
-	{"FL-V001", "schema-violation", Error, "A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Unknown fields are not reported: a structural schema prunes them."},
+	{"FL-V001", "schema-violation", Error, "A custom resource fails the OpenAPI schema of the CRD rendered for it, after defaulting — the same validation the API server performs. Fields the schema does not define are FL-V009."},
 	{"FL-V003", "invalid-builtin", Error, "An object of a built-in API group is not valid for the Kubernetes release the cluster runs (kubeVersion, which can differ per entrypoint): a field that does not exist there, a value of the wrong type, a required field that is missing, or an API version that release does not serve. Every Kubernetes release publishes the OpenAPI schema of its APIs; fluxlint fetches the one for your release once and caches it, so a field added in 1.36 is an error on a 1.35 cluster and fine on a 1.36 one. Set kubeVersion to the release you plan to upgrade to and the same check says what will break. Flux applies with server-side apply, which rejects all of these. When the schemas cannot be loaded (offline with a cold cache), the Kubernetes types bundled with fluxlint are used and the run says so."},
 	{"FL-V004", "invalid-value", Error, "A built-in object has the right fields and types but a value the API server rejects: a selector that does not match the pod template, a port out of range or a port name over 15 characters, a volumeMount with no volume, a CronJob schedule that does not parse, a Service with two unnamed ports. Flux applies with a server-side dry run first, so one such object fails its whole Kustomization. The checks restate the API server's own validation and cover the common workload, Service, Ingress, RBAC and storage kinds; an object of another kind is not checked."},
-	{"FL-V002", "pod-security", Error, "A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created."},
+	{"FL-V008", "metadata-not-string", Error, "A label value is not a string: YAML reads an unquoted 1.31, true or 0 as a number or a boolean. For anything Helm installs the API server rejects the object. For anything a Flux Kustomization applies the result is worse, because nothing fails: kustomize-controller reads the labels to add its own, the read fails as a whole on one non-string value, and it writes back only its own two. The object is applied with none of its labels and the Kustomization is Ready. A Namespace loses its Pod Security level this way, and anything that selects by the lost labels stops matching. Flux treats this as intended (fluxcd/flux2 issue 4968, fluxcd/pkg pull request 1208), so it has to be caught before the merge. Checked on every kind, custom resources included. Annotations are not checked: kustomize converts those to strings."},
+	{"FL-V009", "unknown-field", Error, "A custom resource sets a field that its CRD, as rendered from the repository, does not define. The API server does not reject it: it prunes it, silently, and the object is applied without it. A misspelt field, or one from a newer version of the CRD than the cluster runs, has no effect and nobody is told. Each cluster is checked against the CRDs it installs, so a Flux Kustomization on a cluster with Flux 2.4 is checked against Flux 2.4's CRD. Parts of a schema marked x-kubernetes-preserve-unknown-fields accept anything and are not reported."},
+	{"FL-V002", "pod-security", Error, "A pod template violates the Pod Security level its namespace enforces (pod-security.kubernetes.io/enforce), evaluated with the API server's own checks. The workload is accepted but its pods are never created. Also reports a Namespace whose pod-security.kubernetes.io labels the plugin cannot parse (a level that is not privileged, baseline or restricted; a version that is not latest or v1.x, such as 1.31 without the v): the API server refuses to create such a Namespace."},
 	{"FL-V005", "policy-violation", Error, "A ValidatingAdmissionPolicy that the repository installs, bound with Deny, rejects an object that the repository renders. The policy is compiled and evaluated with the API server's own code: matchConstraints, matchConditions, variables, parameters that are in Git, namespaceObject, and request.userInfo set to the Flux controller's ServiceAccount. Every object is evaluated as a create. With --base, every object the change modifies is also evaluated as an update with oldObject, which is where immutability rules speak. A binding that only warns gives a warning; one that only audits is skipped. An expression that needs the authorizer, or a parameter that is not in Git, is listed as not evaluated."},
 	{"FL-V006", "policy-invalid", Error, "A bound ValidatingAdmissionPolicy has an expression that does not compile. With failurePolicy: Fail, which is the default, the API server then rejects every request the policy matches."},
 	{"FL-V007", "kyverno-violation", Error, "A Kyverno policy that the repository installs, in Enforce mode, rejects an object that the repository renders. Kyverno's engine cannot be linked into another program, so the policies are evaluated by the kyverno CLI, which is that engine: install the version your clusters run and the verdict is the one they would give. Nothing is downloaded or started; when the CLI is not on PATH the policies are listed as not evaluated. Failures of Audit policies, and rules that need the cluster (apiCall, configMap context), are suggestions. Policy exceptions in the repository are honoured. Policies that mutate or generate are not applied."},
 	{"FL-R001", "unresolved-config-reference", Error, "A pod references a Secret or ConfigMap (or a key of one) that nothing creates: not a manifest, an ExternalSecret, a ClusterExternalSecret selecting the namespace, a cert-manager Certificate, nor externals.secrets. The pod stays in ContainerCreating / CreateContainerConfigError."},
-	{"FL-R002", "unresolved-identity-reference", Error, "A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Pods are not created, or cannot pull their image."},
+	{"FL-R002", "unresolved-identity-reference", Error, "A pod names a ServiceAccount or imagePullSecret that nothing creates in its namespace. Without the ServiceAccount, pods are not created. A missing imagePullSecret is a warning: the kubelet starts the pod anyway, and only an image that needs the Secret fails to pull."},
 	{"FL-R003", "positional-patch", Warning, "A JSON patch in a Flux Kustomization addresses a list element by index (env/3, containers/0/args/2). When the upstream manifest adds or reorders entries — typically on a version bump — the patch silently applies to a different element. Prefer a strategic-merge patch keyed by name."},
 	{"FL-R004", "webhook-backend", Error, "An admission webhook's Service does not exist, selects no pods, or fronts only workloads scaled to zero while the webhook fails closed."},
 	{"FL-A001", "assertion-failed", Error, "A repository-specific assertion from .fluxlint.yaml does not hold for a rendered object."},
@@ -91,7 +93,7 @@ var Rules = []Rule{
 	{"FL-R015", "values-reference", Error, "A HelmRelease's valuesFrom names a Secret or ConfigMap, or a key of one (valuesKey, default values.yaml), that nothing creates. helm-controller cannot compose the values (\"could not resolve Secret chart values reference … key not found\"), so the release is never installed. Producers are manifests, ExternalSecrets, ClusterExternalSecrets selecting the namespace, Certificates and externals.secrets; one that does not list its keys (an ExternalSecret with dataFrom) is taken to have any key. Entries marked optional are skipped."},
 	{"FL-O001", "unpredicted-failure", Error, "With --cluster-state: a Kustomization or HelmRelease is not Ready in a real cluster, and no error or warning named it. This is a gap in what fluxlint models. Failures that only repeat another (a dependency or a child that is itself not Ready) are not reported. Read the cluster's message, fix the cause, and consider an assertion or a contract so that the next occurrence is found before the cluster is."},
 	{"FL-O002", "unconfirmed-finding", Info, "With --cluster-state: fluxlint reports an error on a component that is Ready in a real cluster. Either the finding is a false positive, or the cluster was helped by something outside Git, such as a test script that seeds a Secret."},
-	{"FL-O003", "not-compared", Info, "With --cluster-state: components that exist on one side only, so there was nothing to compare. Suspended objects are left out."},
+	{"FL-O003", "not-compared", Info, "With --cluster-state: components that exist on one side only, and components that failed in the cluster but could not be rendered, so there is no verdict either way. Suspended objects are left out."},
 	{"FL-C001", "contract-unmet", Error, "A component ships a fluxlint-contract.yaml declaring what it cannot run without — CRDs it watches, Secret and ConfigMap keys it reads — and this repository does not provide it, or provides it without ordering."},
 	{"FL-X001", "source-unavailable", Warning, "A Kustomization reads from another repository or artifact that could not be materialised, so nothing it applies was analysed. Run without --offline, fix access, or map it with sources.overrides. Raised to an error when the host answered and the ref, tag or chart version is not there: Flux will not find it either, and everything that waits for the component times out."},
 	{"FL-X002", "floating-ref", Info, "A source follows a branch or semver range. What Flux applies can change without a commit to this repository, and fluxlint's result reflects whatever was fetched last."},
@@ -166,20 +168,28 @@ type Result struct {
 
 // Run executes every rule.
 func Run(t *model.Tree, cfg *config.Config) *Result {
-	r := &run{ix: BuildIndex(t, cfg), cfg: cfg, files: map[string][]string{}}
+	clusters := clusterIndexes(t, cfg)
+	whole := mergeIndexes(t, cfg, clusters)
+	r := &run{ix: whole, cfg: cfg, files: map[string][]string{}}
 	r.graphRules()
 	r.substitutionRules()
-	r.runtimeRules()
-	r.admissionWindows(declaredGraph(r.ix))
-	r.contestedFields()
+	declared := declaredGraph(whole)
+	// everything that matches objects by name, within one cluster at a time
+	for _, ix := range clusters {
+		r.ix = ix
+		r.runtimeRules()
+		r.admissionWindows(declared)
+		r.contestedFields()
+		r.secretOwners()
+		r.certificateIssuers()
+		r.sourceCredentials()
+		r.valuesReferences()
+		r.admissionRules()
+		r.controllerRules()
+	}
+	r.ix = whole
 	r.unstableRenders()
 	r.imageRules()
-	r.secretOwners()
-	r.certificateIssuers()
-	r.sourceCredentials()
-	r.valuesReferences()
-	r.admissionRules()
-	r.controllerRules()
 	r.assertionRules()
 	timing := r.timingRules()
 	r.clusterRules()
