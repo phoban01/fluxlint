@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 	"k8s.io/client-go/kubernetes/scheme"
 	psaapi "k8s.io/pod-security-admission/api"
@@ -321,10 +322,11 @@ func (r *run) customResources() {
 }
 
 // jsonable normalises YAML-decoded values (ints, nested model.Object) into the
-// JSON shapes the API machinery expects.
+// JSON shapes the API machinery expects. Whole numbers stay int64, as the API
+// server decodes them: CEL refuses a float64 where the schema says integer.
 func jsonable(o model.Object) map[string]any {
 	var out map[string]any
 	b, _ := json.Marshal(o)
-	_ = json.Unmarshal(b, &out)
+	_ = utiljson.Unmarshal(b, &out)
 	return out
 }
