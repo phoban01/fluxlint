@@ -132,6 +132,34 @@ func TestCELValidationRulesInCRD(t *testing.T) {
 	}
 }
 
+// YAML integers reach CEL as ints, as they do in the API server: a rule over
+// an object holding an int32 field must not trip over a float64.
+func TestCELRulesSeeIntegersAsInts(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "clusters/prod/all.yaml", fmt.Sprintf(ksHeader, "gadgets", "gadgets", ""))
+	write(t, dir, "gadgets/crd.yaml", strings.Replace(gadgetCRD, "                size: {type: integer, minimum: 1}\n",
+		"                size: {type: integer, minimum: 1}\n"+
+			"                limits:\n"+
+			"                  type: array\n"+
+			"                  items:\n"+
+			"                    type: object\n"+
+			"                    properties:\n"+
+			"                      min: {type: integer, format: int32, minimum: 1}\n"+
+			"                      max: {type: integer, format: int32, minimum: 1}\n"+
+			"                    x-kubernetes-validations:\n"+
+			"                      - rule: has(self.min) || has(self.max)\n"+
+			"                        message: set min or max\n"+
+			"                      - rule: \"!has(self.min) || !has(self.max) || self.min <= self.max\"\n"+
+			"                        message: min must not exceed max\n", 1))
+	write(t, dir, "gadgets/crs.yaml", gadget("v1", "ok", "{size: 5, limits: [{max: 1}, {min: 1, max: 2}]}")+
+		gadget("v1", "inverted", "{size: 5, limits: [{min: 3, max: 2}]}"))
+	r := analyseDir(t, dir, nil)
+	got := find(r, "FL-V001")
+	if len(got) != 1 || !strings.Contains(messages(got), "Gadget/default/inverted") || !strings.Contains(messages(got), "min must not exceed max") {
+		t.Fatalf("integer fields must evaluate as ints in CEL rules:\n%s", messages(r.Findings))
+	}
+}
+
 // The admission plugin parses these labels, and refuses a Namespace it
 // cannot parse. A version needs its "v".
 func TestPodSecurityLabelsMustParse(t *testing.T) {
