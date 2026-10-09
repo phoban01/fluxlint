@@ -9,3 +9,10 @@ requires:
     - {name: registry, namespace: shared, keys: [.dockerconfigjson]}
   configMaps:
     - {name: settings, keys: [region]}
+  containers:
+    - name: manager
+      image: registry.example.test/platform/operator
+      env: [WATCH_NAMESPACE, SERVICE_TOKEN]
+      args:
+        required: [--namespace]
+        accepted: [--namespace, --leader-elect, --metrics-bind-address]

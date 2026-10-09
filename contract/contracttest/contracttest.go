@@ -24,7 +24,9 @@ package contracttest
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -57,6 +59,8 @@ type options struct {
 	namespace string
 	objects   []client.Object
 	values    map[string]string
+	container string
+	env       map[string]string
 }
 
 // Option adjusts the environment.
@@ -82,13 +86,39 @@ func WithValue(kind, name, key, value string) Option {
 	return func(o *options) { o.values[kind+"/"+name+"/"+key] = value }
 }
 
+// WithContainer selects the requires.containers entries named name and sets
+// every environment variable they list for the duration of the test, to
+// "contract-test" unless WithEnvValue says otherwise. A process cannot have
+// variables taken away from it, so this proves that the declared ones are
+// enough only when the test runs in a clean environment; use Flags to prove
+// the command line.
+func WithContainer(name string) Option { return func(o *options) { o.container = name } }
+
+// WithEnvValue sets the value of one declared environment variable.
+func WithEnvValue(name, value string) Option { return func(o *options) { o.env[name] = value } }
+
 // New builds the environment. When the test ends, every step the code took
 // outside the contract is reported as a test failure.
 func New(t testing.TB, c *contract.Contract, opts ...Option) *Env {
 	t.Helper()
-	o := &options{namespace: "default", values: map[string]string{}}
+	o := &options{namespace: "default", values: map[string]string{}, env: map[string]string{}}
 	for _, opt := range opts {
 		opt(o)
+	}
+	if o.container != "" {
+		entries := containerEntries(c, o.container)
+		if len(entries) == 0 {
+			t.Fatalf("WithContainer: requires.containers has no entry named %q", o.container)
+		}
+		for _, e := range entries {
+			for _, name := range e.Env {
+				v, ok := o.env[name]
+				if !ok {
+					v = "contract-test"
+				}
+				t.Setenv(name, v)
+			}
+		}
 	}
 	if o.scheme == nil {
 		o.scheme = runtime.NewScheme()
@@ -242,6 +272,69 @@ func (e *Env) record(v string) {
 
 func noMatch(gvk schema.GroupVersionKind) error {
 	return &meta.NoKindMatchError{GroupKind: gvk.GroupKind(), SearchedVersions: []string{gvk.Version}}
+}
+
+// Flags holds the flags a binary registers to the requires.containers entry
+// named container. args.required must all be registered. args.accepted, when
+// set, must be exactly the registered flags: a flag added to the binary
+// without the contract, or kept in the contract after its removal, fails
+// the test. Names are compared without their leading dashes. For a
+// flag.FlagSet, pass StdFlagNames(fs); for pflag, VisitAll the set and
+// collect each Name.
+func Flags(t testing.TB, c *contract.Contract, container string, names []string) {
+	t.Helper()
+	entries := containerEntries(c, container)
+	if len(entries) == 0 {
+		t.Fatalf("Flags: requires.containers has no entry named %q", container)
+	}
+	registered := map[string]bool{}
+	for _, n := range names {
+		registered[contract.FlagName(n)] = true
+	}
+	for _, e := range entries {
+		for _, f := range e.Args.Required {
+			if !registered[contract.FlagName(f)] {
+				t.Errorf("outside the contract: args.required lists %s, which the binary does not register", f)
+			}
+		}
+		if len(e.Args.Accepted) == 0 {
+			continue
+		}
+		accepted := map[string]bool{}
+		for _, f := range e.Args.Accepted {
+			accepted[contract.FlagName(f)] = true
+			if !registered[contract.FlagName(f)] {
+				t.Errorf("outside the contract: args.accepted lists %s, which the binary does not register", f)
+			}
+		}
+		var missing []string
+		for n := range registered {
+			if !accepted[n] {
+				missing = append(missing, "--"+n)
+			}
+		}
+		sort.Strings(missing)
+		for _, f := range missing {
+			t.Errorf("outside the contract: the binary registers %s, but args.accepted does not list it", f)
+		}
+	}
+}
+
+// StdFlagNames lists the flags registered on a flag.FlagSet, for Flags.
+func StdFlagNames(fs *flag.FlagSet) []string {
+	var names []string
+	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+	return names
+}
+
+func containerEntries(c *contract.Contract, name string) []contract.Container {
+	var out []contract.Container
+	for _, e := range c.Requires.Containers {
+		if e.Name == name {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // builtin reports whether an API group ships with Kubernetes: the core group,

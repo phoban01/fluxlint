@@ -94,7 +94,10 @@ func (r *renderer) imageContracts(ctx context.Context, c *model.Component) {
 				notes[i] = fmt.Sprintf("could not look for a contract attached to image %s: %v", img, err)
 			case b != nil:
 				var contract model.Contract
-				if err := yaml.UnmarshalStrict(b, &contract); err != nil {
+				if err := yaml.UnmarshalStrict(b, &contract); err == nil {
+					err = contract.Validate()
+				}
+				if err != nil {
 					notes[i] = fmt.Sprintf("the contract attached to image %s is invalid and was ignored: %v", img, err)
 				} else {
 					found[i] = &contract
@@ -108,24 +111,7 @@ func (r *renderer) imageContracts(ctx context.Context, c *model.Component) {
 	// merge into a copy
 	merged := &model.Contract{}
 	if c.Contract != nil {
-		merged.Requires.CRDs = append(merged.Requires.CRDs, c.Contract.Requires.CRDs...)
-		merged.Requires.Secrets = append(merged.Requires.Secrets, c.Contract.Requires.Secrets...)
-		merged.Requires.ConfigMaps = append(merged.Requires.ConfigMaps, c.Contract.Requires.ConfigMaps...)
-	}
-	inNamespaces := func(reqs []model.ContractConfig, nss []string) []model.ContractConfig {
-		var out []model.ContractConfig
-		for _, req := range reqs {
-			if req.Namespace != "" {
-				out = append(out, req)
-				continue
-			}
-			for _, ns := range nss {
-				placed := req
-				placed.Namespace = ns
-				out = append(out, placed)
-			}
-		}
-		return out
+		mergeContract(merged, c.Contract)
 	}
 	attached := false
 	for i, img := range wanted {
@@ -136,11 +122,42 @@ func (r *renderer) imageContracts(ctx context.Context, c *model.Component) {
 			continue
 		}
 		attached = true
-		merged.Requires.CRDs = append(merged.Requires.CRDs, found[i].Requires.CRDs...)
-		merged.Requires.Secrets = append(merged.Requires.Secrets, inNamespaces(found[i].Requires.Secrets, namespaces[img])...)
-		merged.Requires.ConfigMaps = append(merged.Requires.ConfigMaps, inNamespaces(found[i].Requires.ConfigMaps, namespaces[img])...)
+		mergeContract(merged, placedOnImage(found[i], img, namespaces[img]))
 	}
 	if attached {
 		c.Contract = merged
 	}
+}
+
+// placedOnImage binds a contract fetched from img to where that image runs:
+// a Secret or ConfigMap named without a namespace is expected in each
+// namespace the image runs in, and a container entry that names no container
+// applies to the containers that run the image.
+func placedOnImage(found *model.Contract, img string, namespaces []string) *model.Contract {
+	inNamespaces := func(reqs []model.ContractConfig) []model.ContractConfig {
+		var out []model.ContractConfig
+		for _, req := range reqs {
+			if req.Namespace != "" {
+				out = append(out, req)
+				continue
+			}
+			for _, ns := range namespaces {
+				placed := req
+				placed.Namespace = ns
+				out = append(out, placed)
+			}
+		}
+		return out
+	}
+	placed := &model.Contract{}
+	placed.Requires.CRDs = found.Requires.CRDs
+	placed.Requires.Secrets = inNamespaces(found.Requires.Secrets)
+	placed.Requires.ConfigMaps = inNamespaces(found.Requires.ConfigMaps)
+	for _, ctr := range found.Requires.Containers {
+		if !ctr.Selected() {
+			ctr.Image = img
+		}
+		placed.Requires.Containers = append(placed.Requires.Containers, ctr)
+	}
+	return placed
 }

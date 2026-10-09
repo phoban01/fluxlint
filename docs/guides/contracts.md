@@ -37,6 +37,47 @@ For every Kustomization that renders from that source, fluxlint then reports `FL
 CRDs that only exist at runtime are declared in the consuming repository's
 `externals.runtimeCRDs`, and count as installed by the component named there.
 
+## Environment variables and flags
+
+The entries above say what must exist in the cluster. `requires.containers` says what
+must reach the process: the environment variables it reads and the flags it parses.
+
+```yaml
+requires:
+  containers:
+    - name: manager                     # the container, by name, image, or both
+      env: [WATCH_NAMESPACE, SERVICE_TOKEN]
+      args:
+        required: [--namespace]
+        accepted:                       # every flag this version parses
+          - --namespace
+          - --leader-elect
+          - --metrics-bind-address
+```
+
+For each container the entry selects, fluxlint reports `FL-C001` when
+
+- a variable in `env` is not set. Set means a literal `value`, a `valueFrom`, or an
+  `envFrom` source that defines the key (with its `prefix`). A literal `""` counts as
+  unset; it is what Flux leaves behind for an undefined `${var}`, and most binaries
+  treat it the same as absent. Whether a `secretKeyRef` resolves is `FL-R001`'s job.
+- a flag in `args.required` is not on the command line (`command` plus `args`).
+  `--namespace`, `-namespace` and `--namespace=x` are the same flag.
+- `args.accepted` is set and the command line passes a flag outside it. The binary
+  exits on an unknown flag, so this is the check that catches a flag removed in the
+  version you just pinned.
+
+A container that sets neither `command` nor `args` runs the image's own command line,
+which fluxlint cannot see, so its flags are not checked. The same goes for a `sh -c`
+script. A flag the image's `ENTRYPOINT` passes is invisible too, so do not list it under
+`required`.
+
+`image` uses the same pattern syntax as `contracts.images` and ignores the tag. A
+contract attached to an image may leave `name` and `image` out: the entry applies to
+the containers that run that image. A contract in a Git repository or chart must set
+one of them, or the entry is ignored with a note. Applying it to every container would
+hold a sidecar such as kube-rbac-proxy to the operator's flags.
+
 ## Where a contract lives
 
 fluxlint looks in three places and merges what it finds.
@@ -194,6 +235,33 @@ func TestManagerStartsWithinContract(t *testing.T) {
 
 Use the fake client for every reconciler test, since it costs nothing. Add one envtest
 test for the manager if your CI can run it.
+
+### Flags and environment
+
+`Flags` holds the binary's flag set to the contract. `args.required` must all be
+registered. `args.accepted`, when set, must equal the registered flags exactly, so a
+flag added to the binary and not to the contract fails, and so does one removed from the
+binary and kept in the contract.
+
+```go
+func TestFlagsWithinContract(t *testing.T) {
+	c, err := contract.Load("../fluxlint-contract.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := flag.NewFlagSet("manager", flag.ContinueOnError)
+	registerFlags(fs) // the function main() uses
+	contracttest.Flags(t, c, "manager", contracttest.StdFlagNames(fs))
+}
+```
+
+With pflag, collect the names with `fs.VisitAll` and pass them instead.
+
+`WithContainer("manager")` on `New` sets every variable the entry lists for the test,
+to `contract-test` unless `WithEnvValue` says otherwise. A process cannot have variables
+taken away from it, so this shows the declared ones are enough only when the test runs
+in a clean environment. To prove a `required` flag is required, call your `run(args)`
+function with that flag removed and expect an error.
 
 ## Related checks that need no contract
 

@@ -3,6 +3,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -283,7 +284,75 @@ type Contract struct {
 		// Secrets and ConfigMaps read at runtime, in the component's namespace.
 		Secrets    []ContractConfig `json:"secrets"`
 		ConfigMaps []ContractConfig `json:"configMaps"`
+		// Containers is what must reach the process: environment variables
+		// and command-line flags.
+		Containers []ContractContainer `json:"containers"`
 	} `json:"requires"`
+}
+
+// ContractContainer is what one container's process needs. Name and Image
+// select the container; an entry from a contract attached to an image has
+// Image filled in with that image when it names neither.
+type ContractContainer struct {
+	Name  string   `json:"name"`
+	Image string   `json:"image"` // pattern, compared without tag or digest
+	Env   []string `json:"env"`   // must be set, and not to ""
+	Args  struct {
+		Required []string `json:"required"`
+		Accepted []string `json:"accepted"` // closed set; empty means unchecked
+	} `json:"args"`
+}
+
+// Selected reports whether the entry names a container at all. An entry
+// that does not is only meaningful when attached to an image.
+func (c ContractContainer) Selected() bool { return c.Name != "" || c.Image != "" }
+
+// FlagName is the name under which a flag is compared: the token up to the
+// first "=", without leading dashes.
+func FlagName(token string) string {
+	name, _, _ := strings.Cut(token, "=")
+	return strings.TrimLeft(name, "-")
+}
+
+// Validate reports the first contract entry that cannot be checked. It is
+// the same rule set as the contract module's, kept here because fluxlint
+// does not import that module.
+func (c *Contract) Validate() error {
+	for i, crd := range c.Requires.CRDs {
+		if crd.Group == "" || crd.Kind == "" {
+			return fmt.Errorf("requires.crds[%d]: group and kind are required", i)
+		}
+	}
+	for kind, list := range map[string][]ContractConfig{"secrets": c.Requires.Secrets, "configMaps": c.Requires.ConfigMaps} {
+		for i, cfg := range list {
+			if cfg.Name == "" {
+				return fmt.Errorf("requires.%s[%d]: name is required", kind, i)
+			}
+		}
+	}
+	for i, ctr := range c.Requires.Containers {
+		for j, name := range ctr.Env {
+			if name == "" {
+				return fmt.Errorf("requires.containers[%d].env[%d]: a name is required", i, j)
+			}
+		}
+		accepted := map[string]bool{}
+		for j, f := range ctr.Args.Accepted {
+			if FlagName(f) == "" {
+				return fmt.Errorf("requires.containers[%d].args.accepted[%d]: a flag name is required", i, j)
+			}
+			accepted[FlagName(f)] = true
+		}
+		for j, f := range ctr.Args.Required {
+			if FlagName(f) == "" {
+				return fmt.Errorf("requires.containers[%d].args.required[%d]: a flag name is required", i, j)
+			}
+			if len(accepted) > 0 && !accepted[FlagName(f)] {
+				return fmt.Errorf("requires.containers[%d].args.required[%d]: %s is not in args.accepted", i, j, f)
+			}
+		}
+	}
+	return nil
 }
 
 type ContractCRD struct {

@@ -2,6 +2,8 @@ package lint
 
 import (
 	"fmt"
+	"path"
+	"regexp"
 	"strings"
 
 	"github.com/phoban01/fluxlint/pkg/model"
@@ -113,7 +115,165 @@ func (ix *Index) linkControllers() {
 
 func (r *run) controllerRules() {
 	r.contracts()
+	r.containerContracts()
 	r.moduleSkew()
+}
+
+// containerContracts holds the containers a contract names to what their
+// processes need: environment variables that are set, flags that are passed,
+// and no flag this version does not accept.
+func (r *run) containerContracts() {
+	ix := r.ix
+	for _, c := range ix.Tree.Components {
+		if c.Contract == nil || len(c.Contract.Requires.Containers) == 0 {
+			continue
+		}
+		for _, o := range c.Objects {
+			wl, ok := podTemplate(o)
+			if !ok {
+				continue
+			}
+			containers := append(append([]any{}, model.List(wl.Spec, "initContainers")...), model.List(wl.Spec, "containers")...)
+			for _, ctr := range containers {
+				name, image := model.Str(ctr, "name"), model.Str(ctr, "image")
+				for _, req := range c.Contract.Requires.Containers {
+					if !selectsContainer(req, name, image) {
+						continue
+					}
+					where := fmt.Sprintf("container %s of %s", name, o)
+					for _, v := range req.Env {
+						if !envSet(ctr, v, o.Namespace(), ix.Wiring) {
+							r.report("FL-C001", c, o, fmt.Sprintf("its contract requires environment variable %s in %s, but nothing sets it", v, where))
+						}
+					}
+					flags, seen := commandLine(ctr)
+					if !seen {
+						continue
+					}
+					for _, f := range req.Args.Required {
+						if !flags[model.FlagName(f)] {
+							r.report("FL-C001", c, o, fmt.Sprintf("its contract requires flag %s in %s, but the command line does not pass it", f, where))
+						}
+					}
+					if len(req.Args.Accepted) == 0 {
+						continue
+					}
+					accepted := map[string]bool{}
+					for _, f := range req.Args.Accepted {
+						accepted[model.FlagName(f)] = true
+					}
+					for _, f := range sortedKeys(flags) {
+						if !accepted[f] {
+							r.report("FL-C001", c, o, fmt.Sprintf("passes --%s to %s, which this version does not accept: the binary exits on an unknown flag", f, where),
+								"remove the flag, or pin a version of the image that accepts it")
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// selectsContainer reports whether a contract entry applies to a container.
+// The image pattern is tried against the full reference and against the
+// repository alone, so "registry/op" matches "registry/op:v1".
+func selectsContainer(req model.ContractContainer, name, image string) bool {
+	if req.Name != "" && req.Name != name {
+		return false
+	}
+	if req.Image != "" {
+		p := imageGlob(req.Image)
+		return p.MatchString(image) || p.MatchString(imageRepository(image))
+	}
+	return true
+}
+
+// imageGlob compiles "registry.example.com/team/*" into a matcher. A "*"
+// matches anything, including "/" and ":".
+func imageGlob(p string) *regexp.Regexp {
+	parts := strings.Split(p, "*")
+	for i, s := range parts {
+		parts[i] = regexp.QuoteMeta(s)
+	}
+	return regexp.MustCompile("^" + strings.Join(parts, ".*") + "$")
+}
+
+// imageRepository strips the tag and digest from an image reference.
+func imageRepository(image string) string {
+	repo, _, _ := strings.Cut(image, "@")
+	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
+		repo = repo[:i]
+	}
+	return repo
+}
+
+// envSet reports whether a container's process sees the variable with a
+// value. An explicit entry wins over envFrom; one set to "" counts as unset,
+// which is what Flux leaves behind for an undefined ${var}. An envFrom source
+// that enumerates its keys must have the key; one that does not (an
+// ExternalSecret dataFrom, …) may provide anything. A source that nothing
+// creates is FL-R001's finding, not this one's.
+func envSet(ctr any, name, namespace string, w *wiring) bool {
+	set, found := false, false
+	for _, e := range model.List(ctr, "env") {
+		if model.Str(e, "name") != name {
+			continue
+		}
+		found = true
+		set = model.Get(e, "valueFrom") != nil || model.Str(e, "value") != ""
+	}
+	if found {
+		return set
+	}
+	for _, src := range model.List(ctr, "envFrom") {
+		key, ok := strings.CutPrefix(name, model.Str(src, "prefix"))
+		if !ok {
+			continue
+		}
+		var producers []keyed
+		if s := model.Get(src, "secretRef"); s != nil {
+			producers = w.secrets[nn(namespace, model.Str(s, "name"))]
+		}
+		if s := model.Get(src, "configMapRef"); s != nil {
+			producers = w.configMaps[nn(namespace, model.Str(s, "name"))]
+		}
+		switch {
+		case len(producers) == 0 && !model.Bool(src, "optional"):
+			return true
+		case anyHasKey(producers, key):
+			return true
+		}
+	}
+	return false
+}
+
+// commandLine is the set of flag names a container's command and args pass.
+// seen is false when the container sets neither, so the image's own command
+// line applies, or when the command is a shell and the flags are inside a
+// script string; fluxlint cannot see either.
+func commandLine(ctr any) (flags map[string]bool, seen bool) {
+	command, args := model.Get(ctr, "command"), model.Get(ctr, "args")
+	if command == nil && args == nil {
+		return nil, false
+	}
+	tokens := append(append([]any{}, model.List(ctr, "command")...), model.List(ctr, "args")...)
+	if len(tokens) > 0 {
+		switch path.Base(fmt.Sprint(tokens[0])) {
+		case "sh", "bash", "ash", "dash", "zsh":
+			return nil, false
+		}
+	}
+	flags = map[string]bool{}
+	for _, tok := range tokens {
+		s := fmt.Sprint(tok)
+		if s == "--" {
+			break
+		}
+		if strings.HasPrefix(s, "-") && len(s) > 1 {
+			flags[model.FlagName(s)] = true
+		}
+	}
+	return flags, true
 }
 
 // contracts checks what components declare they cannot run without.

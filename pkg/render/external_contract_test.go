@@ -23,4 +23,11 @@ func TestContractFormatMatchesTheLibrary(t *testing.T) {
 	if len(c.Requires.CRDs) != 2 || len(c.Requires.Secrets) != 2 || len(c.Requires.ConfigMaps) != 1 || c.Requires.Secrets[1].Namespace != "shared" {
 		t.Errorf("parsed %+v", c.Requires)
 	}
+	if len(c.Requires.Containers) != 1 || c.Requires.Containers[0].Name != "manager" || len(c.Requires.Containers[0].Env) != 2 ||
+		len(c.Requires.Containers[0].Args.Required) != 1 || len(c.Requires.Containers[0].Args.Accepted) != 3 {
+		t.Errorf("parsed containers %+v", c.Requires.Containers)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
 }

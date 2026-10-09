@@ -6,7 +6,6 @@ import (
 
 	"github.com/phoban01/fluxlint/pkg/model"
 	"golang.org/x/mod/modfile"
-	"sigs.k8s.io/yaml"
 )
 
 // ContractFile is looked up in the directory a Kustomization renders, then at
@@ -33,12 +32,9 @@ func inspectSource(c *model.Component) {
 		if err != nil {
 			continue
 		}
-		var contract model.Contract
-		if err := yaml.UnmarshalStrict(b, &contract); err != nil {
-			c.RenderNotes = append(c.RenderNotes, ContractFile+" is invalid and was ignored: "+err.Error())
-		} else {
-			c.Contract = &contract
-		}
+		contract, notes := readContract(b, ContractFile)
+		c.RenderNotes = append(c.RenderNotes, notes...)
+		c.Contract = contract
 		return
 	}
 }
