@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/phoban01/fluxlint/pkg/model"
-	"sigs.k8s.io/yaml"
 )
 
 // imagePattern compiles "registry.example.com/team/*" into a matcher. A "*"
@@ -93,14 +92,11 @@ func (r *renderer) imageContracts(ctx context.Context, c *model.Component) {
 			case err != nil:
 				notes[i] = fmt.Sprintf("could not look for a contract attached to image %s: %v", img, err)
 			case b != nil:
-				var contract model.Contract
-				if err := yaml.UnmarshalStrict(b, &contract); err == nil {
-					err = contract.Validate()
-				}
+				contract, err := parseContract(b)
 				if err != nil {
 					notes[i] = fmt.Sprintf("the contract attached to image %s is invalid and was ignored: %v", img, err)
 				} else {
-					found[i] = &contract
+					found[i] = contract
 				}
 			}
 		}()

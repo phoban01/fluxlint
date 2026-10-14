@@ -7,17 +7,27 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// parseContract reads a contract strictly and validates it: a misspelt
+// requirement would otherwise be a requirement nobody checks.
+func parseContract(b []byte) (*model.Contract, error) {
+	var c model.Contract
+	if err := yaml.UnmarshalStrict(b, &c); err != nil {
+		return nil, err
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // readContract parses a contract found in a Git source or a chart. where
 // names the place for notes. An entry under requires.containers that names no
 // container is dropped with a note: only a contract attached to an image can
 // leave the container implicit, and holding every container of a component
 // to it would hold sidecars to it too.
 func readContract(b []byte, where string) (*model.Contract, []string) {
-	var c model.Contract
-	if err := yaml.UnmarshalStrict(b, &c); err != nil {
-		return nil, []string{fmt.Sprintf("%s is invalid and was ignored: %v", where, err)}
-	}
-	if err := c.Validate(); err != nil {
+	c, err := parseContract(b)
+	if err != nil {
 		return nil, []string{fmt.Sprintf("%s is invalid and was ignored: %v", where, err)}
 	}
 	var notes []string
@@ -30,7 +40,7 @@ func readContract(b []byte, where string) (*model.Contract, []string) {
 		kept = append(kept, ctr)
 	}
 	c.Requires.Containers = kept
-	return &c, notes
+	return c, notes
 }
 
 // mergeContract appends src's requirements to dst. dst must be a copy the

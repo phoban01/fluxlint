@@ -37,6 +37,17 @@ func TestReadContractDropsEntriesThatNameNoContainer(t *testing.T) {
 	}
 }
 
+// An image-attached contract goes through parseContract alone: strict parse
+// and validation both apply, so an unmet args.accepted cannot be ignored.
+func TestParseContractValidates(t *testing.T) {
+	if _, err := parseContract([]byte("requires:\n  containers:\n    - name: m\n      args: {required: [--a], accepted: [--b]}\n")); err == nil || !strings.Contains(err.Error(), "not in args.accepted") {
+		t.Errorf("validation error lost: %v", err)
+	}
+	if _, err := parseContract([]byte("requires:\n  env: [A]\n")); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Errorf("strictness lost: %v", err)
+	}
+}
+
 func TestPlacedOnImageBindsUnselectedEntriesToTheImage(t *testing.T) {
 	found, _ := readContract([]byte("requires:\n  secrets:\n    - {name: creds}\n"), "x")
 	found.Requires.Containers = append(found.Requires.Containers,
