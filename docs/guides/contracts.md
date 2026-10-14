@@ -69,8 +69,9 @@ For each container the entry selects, fluxlint reports `FL-C001` when
 
 A container that sets neither `command` nor `args` runs the image's own command line,
 which fluxlint cannot see, so its flags are not checked. The same goes for a `sh -c`
-script. A flag the image's `ENTRYPOINT` passes is invisible too, so do not list it under
-`required`.
+script, also behind `env` or an init wrapper. A bare `--`, as `tini --` passes, is
+skipped. A flag the image's `ENTRYPOINT` passes is invisible too, so do not list it
+under `required`.
 
 `image` uses the same pattern syntax as `contracts.images` and ignores the tag. A
 contract attached to an image may leave `name` and `image` out: the entry applies to
@@ -255,13 +256,16 @@ func TestFlagsWithinContract(t *testing.T) {
 }
 ```
 
-With pflag, collect the names with `fs.VisitAll` and pass them instead.
+With pflag, collect the names with `fs.VisitAll` and pass them instead. The second
+argument selects the entry by its `name` or, for one written to attach to an image, by
+its `image` pattern.
 
 `WithContainer("manager")` on `New` sets every variable the entry lists for the test,
-to `contract-test` unless `WithEnvValue` says otherwise. A process cannot have variables
-taken away from it, so this shows the declared ones are enough only when the test runs
-in a clean environment. To prove a `required` flag is required, call your `run(args)`
-function with that flag removed and expect an error.
+to `contract-test` unless `WithEnvValue` says otherwise. It uses `t.Setenv`, so the test
+must not call `t.Parallel`. A process cannot have variables taken away from it, so this
+shows the declared ones are enough only when the test runs in a clean environment. To
+prove a `required` flag is required, call your `run(args)` function with that flag
+removed and expect an error.
 
 ## Related checks that need no contract
 

@@ -1,0 +1,3 @@
+# want: unknown field
+requires:
+  env: [A]

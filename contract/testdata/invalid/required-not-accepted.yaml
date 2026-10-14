@@ -1,0 +1,5 @@
+# want: requires.containers[0].args.required[0]: --namespace is not in args.accepted
+requires:
+  containers:
+    - name: m
+      args: {required: [--namespace], accepted: [--leader-elect]}

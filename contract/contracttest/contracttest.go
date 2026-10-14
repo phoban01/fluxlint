@@ -86,13 +86,14 @@ func WithValue(kind, name, key, value string) Option {
 	return func(o *options) { o.values[kind+"/"+name+"/"+key] = value }
 }
 
-// WithContainer selects the requires.containers entries named name and sets
-// every environment variable they list for the duration of the test, to
-// "contract-test" unless WithEnvValue says otherwise. A process cannot have
-// variables taken away from it, so this proves that the declared ones are
-// enough only when the test runs in a clean environment; use Flags to prove
-// the command line.
-func WithContainer(name string) Option { return func(o *options) { o.container = name } }
+// WithContainer selects the requires.containers entries whose name or image
+// pattern is sel, and sets every environment variable they list for the
+// duration of the test, to "contract-test" unless WithEnvValue says
+// otherwise. It uses t.Setenv, so the test must not call t.Parallel. A
+// process cannot have variables taken away from it, so this proves that the
+// declared ones are enough only when the test runs in a clean environment;
+// use Flags to prove the command line.
+func WithContainer(sel string) Option { return func(o *options) { o.container = sel } }
 
 // WithEnvValue sets the value of one declared environment variable.
 func WithEnvValue(name, value string) Option { return func(o *options) { o.env[name] = value } }
@@ -274,8 +275,9 @@ func noMatch(gvk schema.GroupVersionKind) error {
 	return &meta.NoKindMatchError{GroupKind: gvk.GroupKind(), SearchedVersions: []string{gvk.Version}}
 }
 
-// Flags holds the flags a binary registers to the requires.containers entry
-// named container. args.required must all be registered. args.accepted, when
+// Flags holds the flags a binary registers to the requires.containers entries
+// whose name or image pattern is container. args.required must all be
+// registered. args.accepted, when
 // set, must be exactly the registered flags: a flag added to the binary
 // without the contract, or kept in the contract after its removal, fails
 // the test. Names are compared without their leading dashes. For a
@@ -327,10 +329,13 @@ func StdFlagNames(fs *flag.FlagSet) []string {
 	return names
 }
 
-func containerEntries(c *contract.Contract, name string) []contract.Container {
+// containerEntries selects the requires.containers entries whose name or
+// image pattern is sel, so an entry written for attach-to-image (image only)
+// can be tested too.
+func containerEntries(c *contract.Contract, sel string) []contract.Container {
 	var out []contract.Container
 	for _, e := range c.Requires.Containers {
-		if e.Name == name {
+		if e.Name == sel || e.Image == sel {
 			out = append(out, e)
 		}
 	}

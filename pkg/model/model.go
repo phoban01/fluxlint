@@ -4,6 +4,7 @@ package model
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -306,6 +307,17 @@ type ContractContainer struct {
 // Selected reports whether the entry names a container at all. An entry
 // that does not is only meaningful when attached to an image.
 func (c ContractContainer) Selected() bool { return c.Name != "" || c.Image != "" }
+
+// ImagePattern compiles "registry.example.com/team/*" into a matcher. A "*"
+// matches anything, including "/" and ":". It is the syntax of both
+// contracts.images and a contract entry's image.
+func ImagePattern(p string) *regexp.Regexp {
+	parts := strings.Split(p, "*")
+	for i, s := range parts {
+		parts[i] = regexp.QuoteMeta(s)
+	}
+	return regexp.MustCompile("^" + strings.Join(parts, ".*") + "$")
+}
 
 // FlagName is the name under which a flag is compared: the token up to the
 // first "=", without leading dashes.

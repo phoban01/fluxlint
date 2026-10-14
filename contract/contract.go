@@ -124,34 +124,28 @@ func (c *Contract) Validate() error {
 			}
 		}
 	}
+	// the same rules, in the same words, as fluxlint's model.Contract.Validate;
+	// testdata/invalid holds a case per rule and both modules run them
 	for i, ctr := range c.Requires.Containers {
-		if err := ctr.Validate(); err != nil {
-			return fmt.Errorf("requires.containers[%d]: %w", i, err)
+		for j, name := range ctr.Env {
+			if name == "" {
+				return fmt.Errorf("requires.containers[%d].env[%d]: a name is required", i, j)
+			}
 		}
-	}
-	return nil
-}
-
-// Validate reports the first entry that cannot be checked.
-func (c Container) Validate() error {
-	for i, name := range c.Env {
-		if name == "" {
-			return fmt.Errorf("env[%d]: a name is required", i)
+		accepted := map[string]bool{}
+		for j, f := range ctr.Args.Accepted {
+			if FlagName(f) == "" {
+				return fmt.Errorf("requires.containers[%d].args.accepted[%d]: a flag name is required", i, j)
+			}
+			accepted[FlagName(f)] = true
 		}
-	}
-	accepted := map[string]bool{}
-	for i, f := range c.Args.Accepted {
-		if FlagName(f) == "" {
-			return fmt.Errorf("args.accepted[%d]: a flag name is required", i)
-		}
-		accepted[FlagName(f)] = true
-	}
-	for i, f := range c.Args.Required {
-		if FlagName(f) == "" {
-			return fmt.Errorf("args.required[%d]: a flag name is required", i)
-		}
-		if len(accepted) > 0 && !accepted[FlagName(f)] {
-			return fmt.Errorf("args.required[%d]: %s is not in args.accepted", i, f)
+		for j, f := range ctr.Args.Required {
+			if FlagName(f) == "" {
+				return fmt.Errorf("requires.containers[%d].args.required[%d]: a flag name is required", i, j)
+			}
+			if len(accepted) > 0 && !accepted[FlagName(f)] {
+				return fmt.Errorf("requires.containers[%d].args.required[%d]: %s is not in args.accepted", i, j, f)
+			}
 		}
 	}
 	return nil

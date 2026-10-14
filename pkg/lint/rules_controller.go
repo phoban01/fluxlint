@@ -125,22 +125,26 @@ func (r *run) controllerRules() {
 func (r *run) containerContracts() {
 	ix := r.ix
 	for _, c := range ix.Tree.Components {
-		if c.Contract == nil || len(c.Contract.Requires.Containers) == 0 {
+		if c.Contract == nil {
 			continue
 		}
-		for _, o := range c.Objects {
-			wl, ok := podTemplate(o)
-			if !ok {
-				continue
+		for _, req := range c.Contract.Requires.Containers {
+			sel := newContainerSelector(req)
+			accepted := map[string]bool{}
+			for _, f := range req.Args.Accepted {
+				accepted[model.FlagName(f)] = true
 			}
-			containers := append(append([]any{}, model.List(wl.Spec, "initContainers")...), model.List(wl.Spec, "containers")...)
-			for _, ctr := range containers {
-				name, image := model.Str(ctr, "name"), model.Str(ctr, "image")
-				for _, req := range c.Contract.Requires.Containers {
-					if !selectsContainer(req, name, image) {
+			for _, o := range c.Objects {
+				wl, ok := podTemplate(o)
+				if !ok {
+					continue
+				}
+				containers := append(append([]any{}, model.List(wl.Spec, "initContainers")...), model.List(wl.Spec, "containers")...)
+				for _, ctr := range containers {
+					if !sel.matches(model.Str(ctr, "name"), model.Str(ctr, "image")) {
 						continue
 					}
-					where := fmt.Sprintf("container %s of %s", name, o)
+					where := fmt.Sprintf("container %s of %s", model.Str(ctr, "name"), o)
 					for _, v := range req.Env {
 						if !envSet(ctr, v, o.Namespace(), ix.Wiring) {
 							r.report("FL-C001", c, o, fmt.Sprintf("its contract requires environment variable %s in %s, but nothing sets it", v, where))
@@ -155,12 +159,8 @@ func (r *run) containerContracts() {
 							r.report("FL-C001", c, o, fmt.Sprintf("its contract requires flag %s in %s, but the command line does not pass it", f, where))
 						}
 					}
-					if len(req.Args.Accepted) == 0 {
+					if len(accepted) == 0 {
 						continue
-					}
-					accepted := map[string]bool{}
-					for _, f := range req.Args.Accepted {
-						accepted[model.FlagName(f)] = true
 					}
 					for _, f := range sortedKeys(flags) {
 						if !accepted[f] {
@@ -174,28 +174,31 @@ func (r *run) containerContracts() {
 	}
 }
 
-// selectsContainer reports whether a contract entry applies to a container.
-// The image pattern is tried against the full reference and against the
-// repository alone, so "registry/op" matches "registry/op:v1".
-func selectsContainer(req model.ContractContainer, name, image string) bool {
-	if req.Name != "" && req.Name != name {
-		return false
-	}
-	if req.Image != "" {
-		p := imageGlob(req.Image)
-		return p.MatchString(image) || p.MatchString(imageRepository(image))
-	}
-	return true
+// containerSelector is a contract entry's name and image match, compiled
+// once per entry.
+type containerSelector struct {
+	name  string
+	image *regexp.Regexp
 }
 
-// imageGlob compiles "registry.example.com/team/*" into a matcher. A "*"
-// matches anything, including "/" and ":".
-func imageGlob(p string) *regexp.Regexp {
-	parts := strings.Split(p, "*")
-	for i, s := range parts {
-		parts[i] = regexp.QuoteMeta(s)
+func newContainerSelector(req model.ContractContainer) containerSelector {
+	s := containerSelector{name: req.Name}
+	if req.Image != "" {
+		s.image = model.ImagePattern(req.Image)
 	}
-	return regexp.MustCompile("^" + strings.Join(parts, ".*") + "$")
+	return s
+}
+
+// matches tries the image pattern against the full reference and against
+// the repository alone, so "registry/op" matches "registry/op:v1".
+func (s containerSelector) matches(name, image string) bool {
+	if s.name != "" && s.name != name {
+		return false
+	}
+	if s.image != nil {
+		return s.image.MatchString(image) || s.image.MatchString(imageRepository(image))
+	}
+	return true
 }
 
 // imageRepository strips the tag and digest from an image reference.
@@ -220,7 +223,10 @@ func envSet(ctr any, name, namespace string, w *wiring) bool {
 			continue
 		}
 		found = true
-		set = model.Get(e, "valueFrom") != nil || model.Str(e, "value") != ""
+		// the raw value: an unquoted number or bool is a schema violation
+		// (FL-V001), not an unset variable
+		v := model.Get(e, "value")
+		set = model.Get(e, "valueFrom") != nil || (v != nil && fmt.Sprint(v) != "")
 	}
 	if found {
 		return set
@@ -249,27 +255,30 @@ func envSet(ctr any, name, namespace string, w *wiring) bool {
 
 // commandLine is the set of flag names a container's command and args pass.
 // seen is false when the container sets neither, so the image's own command
-// line applies, or when the command is a shell and the flags are inside a
-// script string; fluxlint cannot see either.
+// line applies, or when a shell runs a script string (sh -c, also behind
+// env or an init wrapper) and the flags are inside it; fluxlint cannot see
+// either. A bare "--" is skipped, not a stop: init wrappers such as tini
+// take one before the real command.
 func commandLine(ctr any) (flags map[string]bool, seen bool) {
 	command, args := model.Get(ctr, "command"), model.Get(ctr, "args")
 	if command == nil && args == nil {
 		return nil, false
 	}
-	tokens := append(append([]any{}, model.List(ctr, "command")...), model.List(ctr, "args")...)
-	if len(tokens) > 0 {
-		switch path.Base(fmt.Sprint(tokens[0])) {
+	var tokens []string
+	for _, tok := range append(append([]any{}, model.List(ctr, "command")...), model.List(ctr, "args")...) {
+		tokens = append(tokens, fmt.Sprint(tok))
+	}
+	for i, tok := range tokens {
+		switch path.Base(tok) {
 		case "sh", "bash", "ash", "dash", "zsh":
-			return nil, false
+			if i+1 < len(tokens) && tokens[i+1] == "-c" {
+				return nil, false
+			}
 		}
 	}
 	flags = map[string]bool{}
-	for _, tok := range tokens {
-		s := fmt.Sprint(tok)
-		if s == "--" {
-			break
-		}
-		if strings.HasPrefix(s, "-") && len(s) > 1 {
+	for _, s := range tokens {
+		if strings.HasPrefix(s, "-") && len(s) > 1 && s != "--" {
 			flags[model.FlagName(s)] = true
 		}
 	}

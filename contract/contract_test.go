@@ -1,6 +1,8 @@
 package contract
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -40,20 +42,26 @@ func TestFlagName(t *testing.T) {
 	}
 }
 
+// testdata/invalid holds one file per rule. Each starts with "# want: " and
+// the error it must produce. fluxlint runs the same files against its own
+// copy of the rules, so a rule added to one side and not the other fails.
 func TestParseRejectsWhatCannotBeChecked(t *testing.T) {
-	for name, tc := range map[string]struct{ in, want string }{
-		"misspelt section": {"requires:\n  crd:\n    - {group: a.example, kind: A}\n", "unknown field"},
-		"misspelt field":   {"requires:\n  secrets:\n    - {name: s, key: [a]}\n", "unknown field"},
-		"crd without kind": {"requires:\n  crds:\n    - {group: a.example}\n", "group and kind are required"},
-		"unnamed secret":   {"requires:\n  secrets:\n    - {keys: [a]}\n", "name is required"},
-		"flat env":         {"requires:\n  env: [A]\n", "unknown field"},
-		"empty env name":   {"requires:\n  containers:\n    - {name: m, env: [\"\"]}\n", "env[0]: a name is required"},
-		"bare dashes":      {"requires:\n  containers:\n    - {name: m, args: {required: [\"--\"]}}\n", "a flag name is required"},
-		"required not accepted": {"requires:\n  containers:\n    - name: m\n      args: {required: [--namespace], accepted: [--leader-elect]}\n",
-			"--namespace is not in args.accepted"},
-	} {
-		if _, err := Parse([]byte(tc.in)); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: got %v, want an error containing %q", name, err, tc.want)
+	files, err := filepath.Glob("testdata/invalid/*.yaml")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no fixtures: %v", err)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, _, _ := strings.Cut(string(b), "\n")
+		want, ok := strings.CutPrefix(first, "# want: ")
+		if !ok {
+			t.Fatalf("%s: first line must be '# want: <error>'", f)
+		}
+		if _, err := Parse(b); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want an error containing %q", f, err, want)
 		}
 	}
 	if _, err := Load("testdata/absent.yaml"); err == nil {

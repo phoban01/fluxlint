@@ -3,23 +3,11 @@ package render
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/phoban01/fluxlint/pkg/model"
 )
-
-// imagePattern compiles "registry.example.com/team/*" into a matcher. A "*"
-// matches anything, including "/" and ":".
-func imagePattern(p string) *regexp.Regexp {
-	parts := strings.Split(p, "*")
-	for i, s := range parts {
-		parts[i] = regexp.QuoteMeta(s)
-	}
-	return regexp.MustCompile("^" + strings.Join(parts, ".*") + "$")
-}
 
 // images maps every container image c renders to the namespaces it runs in.
 func images(c *model.Component) map[string][]string {
@@ -62,7 +50,7 @@ func (r *renderer) imageContracts(ctx context.Context, c *model.Component) {
 	}
 	if r.imagePatterns == nil {
 		for _, p := range r.cfg.Contracts.Images {
-			r.imagePatterns = append(r.imagePatterns, imagePattern(p))
+			r.imagePatterns = append(r.imagePatterns, model.ImagePattern(p))
 		}
 	}
 	namespaces := images(c)

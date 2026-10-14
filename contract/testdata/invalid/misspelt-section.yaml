@@ -1,0 +1,4 @@
+# want: unknown field
+requires:
+  crd:
+    - {group: a.example, kind: A}

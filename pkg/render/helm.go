@@ -130,7 +130,9 @@ func chartContract(ch *chart.Chart) (*model.Contract, []string) {
 		}
 		c, n := readContract(f.Data, fmt.Sprintf("%s in chart %s", ContractFile, ch.Name()))
 		notes = append(notes, n...)
-		out = c
+		if c != nil {
+			out = c
+		}
 	}
 	for _, dep := range ch.Dependencies() {
 		sub, n := chartContract(dep)

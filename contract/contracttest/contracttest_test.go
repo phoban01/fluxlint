@@ -188,3 +188,17 @@ func TestFlagsHoldTheBinaryToTheContract(t *testing.T) {
 		t.Errorf("a required flag the binary lacks: %q", tb.errors)
 	}
 }
+
+func TestFlagsSelectsAnEntryByImage(t *testing.T) {
+	c := load(t)
+	c.Requires.Containers[0].Name = "" // written for attach-to-image
+	fs := flag.NewFlagSet("manager", flag.ContinueOnError)
+	fs.String("namespace", "", "")
+	fs.Bool("leader-elect", false, "")
+	fs.String("metrics-bind-address", "", "")
+	tb := &spy{TB: t}
+	Flags(tb, c, "registry.example.test/platform/operator", StdFlagNames(fs))
+	if len(tb.errors) != 0 {
+		t.Errorf("selected by image: %q", tb.errors)
+	}
+}
