@@ -21,7 +21,7 @@ func (r *renderer) verifyImages(ctx context.Context, c *model.Component) {
 	}
 	if r.verifyPatterns == nil {
 		for _, p := range r.cfg.Images.Verify {
-			r.verifyPatterns = append(r.verifyPatterns, imagePattern(p))
+			r.verifyPatterns = append(r.verifyPatterns, model.ImagePattern(p))
 		}
 	}
 	var wanted []string

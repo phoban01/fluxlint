@@ -1,0 +1,4 @@
+# want: requires.crds[0]: group and kind are required
+requires:
+  crds:
+    - {group: a.example}

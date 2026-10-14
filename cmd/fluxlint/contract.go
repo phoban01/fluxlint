@@ -47,7 +47,10 @@ func contractCmd(args []string) int {
 		b, err := os.ReadFile(*file)
 		if err == nil {
 			// never publish a contract fluxlint itself would refuse to read
-			err = yaml.UnmarshalStrict(b, &model.Contract{})
+			var c model.Contract
+			if err = yaml.UnmarshalStrict(b, &c); err == nil {
+				err = c.Validate()
+			}
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s: %v\n", *file, err)

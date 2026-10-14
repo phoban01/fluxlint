@@ -1,0 +1,4 @@
+# want: requires.containers[0].env[0]: a name is required
+requires:
+  containers:
+    - {name: m, env: [""]}

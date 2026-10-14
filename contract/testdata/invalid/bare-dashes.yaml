@@ -1,0 +1,4 @@
+# want: requires.containers[0].args.required[0]: a flag name is required
+requires:
+  containers:
+    - {name: m, args: {required: ["--"]}}

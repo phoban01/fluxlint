@@ -221,7 +221,7 @@ What a controller or chart declares it cannot run without.
 
 Default severity: **error**
 
-A component ships a fluxlint-contract.yaml declaring what it cannot run without — CRDs it watches, Secret and ConfigMap keys it reads — and this repository does not provide it, or provides it without ordering.
+A component ships a fluxlint-contract.yaml that says what it cannot run without: CRDs it watches, Secret and ConfigMap keys it reads, environment variables and flags its containers need. This repository does not provide it, provides it without ordering, or passes a flag this version does not accept.
 
 ## Assertions
 

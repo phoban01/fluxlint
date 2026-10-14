@@ -128,12 +128,11 @@ func chartContract(ch *chart.Chart) (*model.Contract, []string) {
 		if f.Name != ContractFile {
 			continue
 		}
-		var c model.Contract
-		if err := yaml.UnmarshalStrict(f.Data, &c); err != nil {
-			notes = append(notes, fmt.Sprintf("%s in chart %s is invalid and was ignored: %v", ContractFile, ch.Name(), err))
-			continue
+		c, n := readContract(f.Data, fmt.Sprintf("%s in chart %s", ContractFile, ch.Name()))
+		notes = append(notes, n...)
+		if c != nil {
+			out = c
 		}
-		out = &c
 	}
 	for _, dep := range ch.Dependencies() {
 		sub, n := chartContract(dep)
@@ -144,9 +143,7 @@ func chartContract(ch *chart.Chart) (*model.Contract, []string) {
 		if out == nil {
 			out = &model.Contract{}
 		}
-		out.Requires.CRDs = append(out.Requires.CRDs, sub.Requires.CRDs...)
-		out.Requires.Secrets = append(out.Requires.Secrets, sub.Requires.Secrets...)
-		out.Requires.ConfigMaps = append(out.Requires.ConfigMaps, sub.Requires.ConfigMaps...)
+		mergeContract(out, sub)
 	}
 	return out, notes
 }

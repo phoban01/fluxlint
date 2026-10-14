@@ -1,0 +1,4 @@
+# want: unknown field
+requires:
+  secrets:
+    - {name: s, key: [a]}

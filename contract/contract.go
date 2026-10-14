@@ -10,6 +10,7 @@ package contract
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 )
@@ -29,6 +30,9 @@ type Requires struct {
 	// Secrets and ConfigMaps the controller reads at runtime.
 	Secrets    []Config `json:"secrets,omitempty"`
 	ConfigMaps []Config `json:"configMaps,omitempty"`
+	// Containers is what must reach the process itself: environment
+	// variables and command-line flags.
+	Containers []Container `json:"containers,omitempty"`
 }
 
 type CRD struct {
@@ -44,6 +48,43 @@ type Config struct {
 	Namespace string `json:"namespace,omitempty"`
 	// Keys the controller reads. Each must exist.
 	Keys []string `json:"keys,omitempty"`
+}
+
+// Container is what one container's process needs on its command line and in
+// its environment. Name and Image select the container; Image uses the
+// pattern syntax of fluxlint's contracts.images ("*" matches anything) and
+// is compared without the tag or digest. A contract attached to an image may
+// omit both: it applies to the containers that run that image. A contract in
+// a Git repository or chart must set at least one, or fluxlint ignores the
+// entry, because applying it to every container would also hold sidecars to
+// it.
+type Container struct {
+	Name  string `json:"name,omitempty"`
+	Image string `json:"image,omitempty"`
+	// Env lists environment variables the process reads and does not start
+	// without. A variable set to the empty string counts as unset.
+	Env []string `json:"env,omitempty"`
+	// Args describes the command-line flags.
+	Args Args `json:"args,omitempty"`
+}
+
+// Args describes a container's command-line flags. Names are compared
+// without their leading dashes, so "--namespace" and "namespace" are the
+// same flag.
+type Args struct {
+	// Required flags must be passed.
+	Required []string `json:"required,omitempty"`
+	// Accepted is the closed set of flags this version parses. When set,
+	// any other flag on the command line is an error: the binary exits on
+	// an unknown flag. Required must be a subset.
+	Accepted []string `json:"accepted,omitempty"`
+}
+
+// FlagName is the name under which a flag is compared: the token up to the
+// first "=", without leading dashes.
+func FlagName(token string) string {
+	name, _, _ := strings.Cut(token, "=")
+	return strings.TrimLeft(name, "-")
 }
 
 // Load reads and validates the contract at path.
@@ -80,6 +121,30 @@ func (c *Contract) Validate() error {
 		for i, cfg := range list {
 			if cfg.Name == "" {
 				return fmt.Errorf("requires.%s[%d]: name is required", kind, i)
+			}
+		}
+	}
+	// the same rules, in the same words, as fluxlint's model.Contract.Validate;
+	// testdata/invalid holds a case per rule and both modules run them
+	for i, ctr := range c.Requires.Containers {
+		for j, name := range ctr.Env {
+			if name == "" {
+				return fmt.Errorf("requires.containers[%d].env[%d]: a name is required", i, j)
+			}
+		}
+		accepted := map[string]bool{}
+		for j, f := range ctr.Args.Accepted {
+			if FlagName(f) == "" {
+				return fmt.Errorf("requires.containers[%d].args.accepted[%d]: a flag name is required", i, j)
+			}
+			accepted[FlagName(f)] = true
+		}
+		for j, f := range ctr.Args.Required {
+			if FlagName(f) == "" {
+				return fmt.Errorf("requires.containers[%d].args.required[%d]: a flag name is required", i, j)
+			}
+			if len(accepted) > 0 && !accepted[FlagName(f)] {
+				return fmt.Errorf("requires.containers[%d].args.required[%d]: %s is not in args.accepted", i, j, f)
 			}
 		}
 	}

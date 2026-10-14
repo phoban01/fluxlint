@@ -2,7 +2,9 @@ package contracttest
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -138,5 +140,65 @@ func TestBuiltinGroups(t *testing.T) {
 		if builtin(group) != want {
 			t.Errorf("builtin(%q) = %v", group, !want)
 		}
+	}
+}
+
+func TestWithContainerSetsTheDeclaredEnvironment(t *testing.T) {
+	t.Setenv("WATCH_NAMESPACE", "")
+	New(t, load(t), WithContainer("manager"), WithEnvValue("SERVICE_TOKEN", "s3cret"))
+	if got := os.Getenv("WATCH_NAMESPACE"); got != "contract-test" {
+		t.Errorf("WATCH_NAMESPACE = %q", got)
+	}
+	if got := os.Getenv("SERVICE_TOKEN"); got != "s3cret" {
+		t.Errorf("SERVICE_TOKEN = %q", got)
+	}
+}
+
+func TestFlagsHoldTheBinaryToTheContract(t *testing.T) {
+	fs := flag.NewFlagSet("manager", flag.ContinueOnError)
+	fs.String("namespace", "", "")
+	fs.Bool("leader-elect", false, "")
+	fs.String("metrics-bind-address", "", "")
+
+	tb := &spy{TB: t}
+	Flags(tb, load(t), "manager", StdFlagNames(fs))
+	if len(tb.errors) != 0 {
+		t.Errorf("the binary matches the contract: %q", tb.errors)
+	}
+
+	fs.Bool("new-feature", false, "") // added to the binary, not to the contract
+	c := load(t)
+	c.Requires.Containers[0].Args.Accepted = c.Requires.Containers[0].Args.Accepted[:2] // metrics-bind-address removed from the contract
+	tb = &spy{TB: t}
+	Flags(tb, c, "manager", StdFlagNames(fs))
+	got := strings.Join(tb.errors, "\n")
+	for _, want := range []string{
+		"the binary registers --new-feature, but args.accepted does not list it",
+		"the binary registers --metrics-bind-address, but args.accepted does not list it",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+
+	c.Requires.Containers[0].Args.Required = []string{"--gone"}
+	tb = &spy{TB: t}
+	Flags(tb, c, "manager", StdFlagNames(fs))
+	if !strings.Contains(strings.Join(tb.errors, "\n"), "args.required lists --gone, which the binary does not register") {
+		t.Errorf("a required flag the binary lacks: %q", tb.errors)
+	}
+}
+
+func TestFlagsSelectsAnEntryByImage(t *testing.T) {
+	c := load(t)
+	c.Requires.Containers[0].Name = "" // written for attach-to-image
+	fs := flag.NewFlagSet("manager", flag.ContinueOnError)
+	fs.String("namespace", "", "")
+	fs.Bool("leader-elect", false, "")
+	fs.String("metrics-bind-address", "", "")
+	tb := &spy{TB: t}
+	Flags(tb, c, "registry.example.test/platform/operator", StdFlagNames(fs))
+	if len(tb.errors) != 0 {
+		t.Errorf("selected by image: %q", tb.errors)
 	}
 }
