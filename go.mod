@@ -10,7 +10,7 @@ require (
 	github.com/google/cel-go v0.29.2
 	github.com/google/go-containerregistry v0.22.1
 	github.com/robfig/cron/v3 v3.0.1
-	golang.org/x/mod v0.41.0
+	golang.org/x/mod v0.42.0
 	helm.sh/helm/v3 v3.22.0
 	k8s.io/api v0.37.0
 	k8s.io/apiextensions-apiserver v0.37.0
