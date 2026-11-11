@@ -24,7 +24,7 @@ jobs:
       - run: pip install -r docs/requirements.txt
       # --strict: a broken link or a page missing from the nav fails the build
       - run: mkdocs build --strict
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
